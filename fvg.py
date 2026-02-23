@@ -7,12 +7,12 @@ from pandas import Timestamp
 
 def detect_fvg(b0: Candle, b1: Candle, b2: Candle) -> Optional[FVG]:
     # b1 is unused in classic 3-bar FVG detection; keep it for signature clarity if you want
-    high0 = float(b0["high"])
-    low0  = float(b0["low"])
-    low2  = float(b2["low"])
-    high2 = float(b2["high"])
+    high0 = float(b0.high)
+    low0  = float(b0.low)
+    low2  = float(b2.low)
+    high2 = float(b2.high)
 
-    ts = b2.get("timestamp")
+    ts = b2.ts
     created_ts = ts if isinstance(ts, Timestamp) else Timestamp(ts) if ts is not None else Timestamp.utcnow()
 
     if low2 > high0:

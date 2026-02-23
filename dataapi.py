@@ -140,14 +140,14 @@ class AlpacaPaperTrading:
             "Content-Type": "application/json",
         })
 
-    def _get_account(self, payload: Json) -> Json:
-        url = f"{self.base_url}/v2/account"
-        r = self._session.post(url, json=payload)
-        return r.json()
-
     def _post_order(self, payload: Json) -> Json:
         url = f"{self.base_url}/v2/orders"
         r = self._session.post(url, json=payload)
+        return r.json()
+
+    def _get_account(self) -> Json:
+        url = f"{self.base_url}/v2/account"
+        r = self._session.get(url)
         return r.json()
     
     def get_account(self):

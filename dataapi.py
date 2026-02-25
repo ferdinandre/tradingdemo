@@ -50,9 +50,9 @@ class AlpacaMarketData:
             "symbols": symbol,
             "feed": self.feed,
         }
-        print(f"Sent candle response at {datetime.now()}")
+        #print(f"Sent candle response at {datetime.now()}")
         r = self._session.get(url, params=params)
-        print(f"Got candle response at {datetime.now()}")
+        #print(f"Got candle response at {datetime.now()}")
         data = r.json()
         
         # Shape: { "bars": { "TSLA": [ {t,o,h,l,c,v,vw,n} ] }, "next_page_token": ... }

@@ -45,7 +45,7 @@ class TimeMgr:
         
         if diff > 0:
             time.sleep(diff)
-        print(f"Waited until {datetime.now()}")
+        #print(f"Waited until {datetime.now()}")
 
     def market_closed_yet(self):
         now = datetime.now(self.eastern)

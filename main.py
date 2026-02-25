@@ -89,6 +89,10 @@ def main():
     while trading:
         #print(paper_trading.get_account())
         next_candle = market_data.get_latest_1min_candle(SYMBOL)
+        if next_candle is None:
+            print("No candle yet → skipping iteration")
+            timemgr.wait_until_next_minute()
+            continue
         current_equity = float(paper_trading.get_account()["cash"]) / 100
         print(f"Current equity {current_equity}")
         fvg.stack_pop_invalidated(fvg_stack, next_candle.low, next_candle.high)

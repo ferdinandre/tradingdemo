@@ -104,8 +104,7 @@ def main():
             live_exec.cut_loss(paper=paper_trading, pos=pos, bar_high=next_candle.high, bar_low=next_candle.low, cfg=cfg)
             reason = live_exec.hard_exit(
                 paper=paper_trading, pos=pos,
-                bar_high=next_candle.high, bar_low=next_candle.low, bar_close=next_candle.close,
-                time_mgmt=timemgr, cfg=cfg
+                bar_high=next_candle.high, bar_low=next_candle.low, extended_hours=False
             )
             if reason is not None:
                 in_position = False

@@ -5,7 +5,7 @@ from time_mgmt import TimeMgr
 import fvg
 import live_exec
 import tomllib
-
+import datetime
 with open("creds.toml", "rb") as f:
     toml = tomllib.load(f)
 
@@ -13,7 +13,9 @@ API_KEY = toml["key_id"]
 
 API_SECRET = toml["secret_key"]
 
-SHORT_ENABLED = toml["short_enabled"]
+SHORT_ENABLED = bool(toml["short_enabled"])
+
+print(SHORT_ENABLED)
 
 SYMBOL = "AAPL"
 
@@ -71,27 +73,24 @@ def on_new_candle(candle):
 
 
 def main():
-    trading = False
-    if not trading:
-        if timemgr.current_dt < timemgr.today_930 or timemgr.current_dt > timemgr.today_1630:
-            print("Trading hasnt begun yet today, waiting until")
-            if timemgr.current_dt < timemgr.today_930:
-                print("Today 09:35 EST")
-                timemgr.wait_until(timemgr.today_935)
-            elif timemgr.current_dt > timemgr.today_1630:
-                print("Tomorrow 09:35 EST")
-                timemgr.wait_until(timemgr.next_day_935)
-        else:
-            print("trading has begun")
-            timemgr.wait_until(timemgr.today_935)
-            trading = True
-        #today_1st_5min = market_data.get_today_open_5min_candle()
-        trading = True  
+    if timemgr.current_dt < timemgr.today_930 or timemgr.current_dt > timemgr.today_1630:
+        print("Trading hasnt begun yet today, waiting until")
+        if timemgr.current_dt < timemgr.today_930:
+            print("Today 09:35 EST")
+            timemgr.wait_until(timemgr.today_930)
+        elif timemgr.current_dt > timemgr.today_1630:
+            print("Tomorrow 09:35 EST")
+            timemgr.wait_until(timemgr.next_day_935)
+    else:
+        print("trading has begun")
+        timemgr.wait_until(timemgr.today_935)
+    trading = True 
     in_position = False
     while trading:
         #print(paper_trading.get_account())
-        current_equity = float(paper_trading.get_account()["cash"]) / 100
         next_candle = market_data.get_latest_1min_candle(SYMBOL)
+        current_equity = float(paper_trading.get_account()["cash"]) / 100
+        print(f"Current equity {current_equity}")
         fvg.stack_pop_invalidated(fvg_stack, next_candle.low, next_candle.high)
 
         if in_position:
@@ -105,6 +104,7 @@ def main():
             if reason is not None:
                 in_position = False
                 pos = None
+            print(f"Evaluated current position at {datetime.now()}")
         else:
             if not (candle0 is None or candle1 is None): 
                 current_fvg = fvg.detect_fvg(candle0, candle1, next_candle)
@@ -114,22 +114,29 @@ def main():
                         fvg_stack.append(current_fvg)
                         pushed = True
                     if pushed:
-                        if current_fvg.dir == "bear" and not SHORT_ENABLED != "True":
-                            print("Shorting not enabled")
-                            continue
+                        allow_entry = True
+                        if current_fvg.dir == "bear" and not SHORT_ENABLED:
+                                print("Shorting not enabled")
+                                allow_entry = False
                         else:
-                            print("Shorting is enabled")
-                            pos = live_exec.enter_position(
-                                paper=paper_trading,
-                                symbol=SYMBOL,
-                                fvg_dir=current_fvg.dir,
-                                entry_price=live_exec.get_entry_price(market_data, SYMBOL),
-                                signal_low=next_candle.low,
-                                signal_high=next_candle.high,
-                                tp_r=TP_R,
-                                equity=current_equity,
-                                cfg=cfg,
-                            )
+                            if allow_entry:
+                                pos = live_exec.enter_position(
+                                    paper=paper_trading,
+                                    symbol=SYMBOL,
+                                    fvg_dir=current_fvg.dir,
+                                    entry_price=live_exec.get_entry_price(market_data, SYMBOL),
+                                    signal_low=next_candle.low,
+                                    signal_high=next_candle.high,
+                                    tp_r=TP_R,
+                                    equity=current_equity,
+                                    cfg=cfg,
+                                )
+                                if pos:
+                                    print(f"Entered new position at {datetime.datetime.now()}")
+                else:
+                    print(f"Finished dry leg at {datetime.datetime.now()}")
+            else:
+                print(f"Finished dry leg at {datetime.datetime.now()}")
         on_new_candle(next_candle)
         timemgr.wait_until_next_minute()
         trading = timemgr.market_closed_yet()

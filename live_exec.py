@@ -89,6 +89,7 @@ def enter_position(
         side=side,
         max_pos_value_mult=cfg.max_pos_value_mult,
     )
+    print(f"Entering position {side}, with quantity {qty}")
     if qty <= 0:
         return None
 
@@ -156,6 +157,7 @@ def take_profit(
         long=close_long_flag(pos.side),
         extended_hours=extended_hours,
     )
+    print(f"TAke profit closing position {pos.side}, quantity: {to_close}")
     pos.remaining_qty -= to_close
     return float(to_close)
 
@@ -206,6 +208,7 @@ def cut_loss(
         long=close_long_flag(pos.side),
         extended_hours=extended_hours,
     )
+    print(f"Cut loss closing position {pos.side}, quantity: {to_cut}")
     pos.remaining_qty -= to_cut
     return float(to_cut)
 

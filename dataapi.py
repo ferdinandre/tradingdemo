@@ -27,7 +27,7 @@ class AlpacaMarketData:
         self.api_secret = api_secret
         self.base_url = "https://data.alpaca.markets"
         self.feed = feed  # "iex" or "sip" (depending on your subscription)
-
+        self.last_ts = None
         self._session = requests.Session()
         self._session.headers.update({
             "APCA-API-KEY-ID": self.api_key,
@@ -35,7 +35,7 @@ class AlpacaMarketData:
         })
 
     def _get_latest_quote(self, symbol: str):
-        url = f"{self.base}/v2/stocks/quotes/latest"
+        url = f"{self.base_url}/v2/stocks/quotes/latest"
         params = {
             "symbols": symbol,
             "feed": self.feed
@@ -45,20 +45,23 @@ class AlpacaMarketData:
 
     def _get_latest_bar(self, symbol: str, timeframe: str) -> Candle:
         # /v2/stocks/bars?symbols=...&timeframe=...&limit=1&feed=...
-        url = f"{self.base_url}/v2/stocks/bars"
+        url = f"{self.base_url}/v2/stocks/bars/latest"
         params = {
             "symbols": symbol,
-            "timeframe": timeframe,
-            "limit": 1,
             "feed": self.feed,
         }
+        print(f"Sent candle response at {datetime.now()}")
         r = self._session.get(url, params=params)
+        print(f"Got candle response at {datetime.now()}")
         data = r.json()
-
+        
         # Shape: { "bars": { "TSLA": [ {t,o,h,l,c,v,vw,n} ] }, "next_page_token": ... }
-        bar = data["bars"][symbol][0]
+        bar = data["bars"][symbol]
         ts = datetime.fromisoformat(bar["t"].replace("Z", "+00:00"))
-
+        if self.last_ts == ts:
+            return
+        self.last_ts = ts
+        print(f"Got candle w timestamp: {ts}")
         return Candle(
             symbol=symbol,
             ts=ts,

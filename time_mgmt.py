@@ -10,7 +10,7 @@ class TimeMgr:
         self.current_dt = datetime.now(self.eastern)
 
         self.next_day_930 = (self.current_dt + timedelta(days=1)).replace(
-            hour=9, minute=30, second=0, microsecond=0
+            hour=9, minute=39, second=0, microsecond=0
         )
 
         self.today_930 = self.current_dt.replace(
@@ -30,12 +30,13 @@ class TimeMgr:
         )
 
 
+
     def wait_until_next_minute(self):
         now = datetime.now(self.eastern)
         next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
         delay = (next_minute - now).total_seconds()
         if delay > 0:
-            time.sleep(delay + 0.05)
+            time.sleep(delay)
 
 
     def wait_until(self, target_datetime):
@@ -44,6 +45,7 @@ class TimeMgr:
         
         if diff > 0:
             time.sleep(diff)
+        print(f"Waited until {datetime.now()}")
 
     def market_closed_yet(self):
         now = datetime.now(self.eastern)

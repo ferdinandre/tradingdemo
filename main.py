@@ -6,6 +6,8 @@ import fvg
 import live_exec
 import tomllib
 import datetime
+
+#TODO New strategy: first 5 min candle: look for a fvg that breaks throguh first5min low or high, wait for retest? i guess a candle high going within the same fvg, then an engulfing "??" then enter 3:1 RR"
 with open("creds.toml", "rb") as f:
     toml = tomllib.load(f)
 
@@ -135,6 +137,7 @@ def main():
                                     equity=current_equity,
                                     cfg=cfg,
                                 )
+                                in_position = pos is not None
                                 if pos:
                                     print(f"Entered new position at {datetime.datetime.now()}")
                 else:

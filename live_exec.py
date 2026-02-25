@@ -229,11 +229,13 @@ def hard_exit(
     Enforce stop/TP/EOD exits with MARKET orders.
     Returns exit_reason if position flattened else None.
     """
+    print("hard exit running")
     if pos.remaining_qty <= 0:
         return "flat"
 
     h = float(bar_high)
     l = float(bar_low)
+
 
     # stop-first (conservative)
     stop_hit = (l <= pos.stop) if pos.side == "long" else (h >= pos.stop)

@@ -47,7 +47,7 @@ class TimeMgr:
             time.sleep(diff)
         #print(f"Waited until {datetime.now()}")
 
-    def market_closed_yet(self):
+    def market_still_open(self):
         now = datetime.now(self.eastern)
         return (self.today_1630 - now).total_seconds() > 60
 

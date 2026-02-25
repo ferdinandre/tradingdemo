@@ -142,9 +142,9 @@ def main():
             else:
                 print(f"Finished dry leg at {datetime.datetime.now()}")
         on_new_candle(next_candle)
-        timemgr.wait_until_next_minute()
-        trading = timemgr.market_closed_yet()
+        trading = timemgr.market_still_open()
         print(f"set trading to {trading}")
+        timemgr.wait_until_next_minute()
         
 if __name__ == "__main__":
     main()

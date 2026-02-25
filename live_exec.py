@@ -126,6 +126,7 @@ def take_profit(
     Profit ladder: scale out according to normalized log fraction.
     Returns qty_closed_this_call.
     """
+    print("Take profit running")
     if pos.remaining_qty <= 0:
         return 0.0
 
@@ -146,6 +147,7 @@ def take_profit(
     to_close = desired_closed_qty - already_closed_qty
 
     if to_close <= 0:
+        print("Nothing to take")
         return 0.0
 
     to_close = min(to_close, pos.remaining_qty)
@@ -175,6 +177,7 @@ def cut_loss(
     Loss ladder: reduce exposure as adverse excursion increases.
     Returns qty_cut_this_call.
     """
+    print("Cut loss runnig")
     if not cfg.enable_loss_ladder:
         return 0.0
     if pos.remaining_qty <= 0:
@@ -197,6 +200,7 @@ def cut_loss(
     to_cut = desired_cut_qty - already_cut_qty
 
     if to_cut <= 0:
+        print("Nothing to cut")
         return 0.0
 
     to_cut = min(to_cut, pos.remaining_qty)

@@ -19,7 +19,7 @@ SYMBOL = "AAPL"
 
 print(SHORT_ENABLED)
 
-market_data = dataapi.AlpacaMarketData(api_key=API_KEY, api_secret=API_SECRET, feed="iex")
+market_data = dataapi.AlpacaMarketData(api_key=API_KEY, api_secret=API_SECRET, feed="sip")
 
 paper_trading = dataapi.AlpacaPaperTrading(api_key=API_KEY, api_secret=API_SECRET)
 

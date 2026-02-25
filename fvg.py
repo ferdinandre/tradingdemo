@@ -26,9 +26,10 @@ def detect_fvg(b0: Candle, b1: Candle, b2: Candle) -> Optional[FVG]:
 
 def should_push(stack: List[FVG], new_dir: str, gap_low: float, gap_high: float) -> bool:
     if not stack:
-        return True
+        return abs(gap_high - gap_low) > 0.02
 
     top = stack[-1]
+
     if new_dir != top.dir:
         # opposite direction while structure still active -> ignore (wait for pops)
         return False

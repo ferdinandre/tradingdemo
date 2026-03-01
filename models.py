@@ -14,6 +14,22 @@ class FVG:
     created_ts: pd.Timestamp  # ET
 
 @dataclass
+class PendingSetup:
+    fvg: FVG
+    stage: str  # "WAIT_RETEST" | "WAIT_ENGULF"
+    retest_high: float = 0.0
+    retest_low: float = 0.0
+
+@dataclass
+class PendingEntry:
+    symbol: str
+    side: Side                  # "long" / "short"
+    stop: float                 # fixed from signal candle / FVG
+    tp_r: float                 # e.g. 2
+    armed_at_ts: datetime       # when we decided to enter (close of b2)
+    valid_for_minute_ts: datetime  # the minute we intend to enter (b2.ts + 1min)
+
+@dataclass
 class PositionState:
     symbol: str
     side: Side

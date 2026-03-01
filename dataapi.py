@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta, time as dtime
 from models import Candle
 import requests
+import time
 
 
 Json = t.Dict[str, t.Any]
@@ -58,10 +59,19 @@ class AlpacaMarketData:
         # Shape: { "bars": { "TSLA": [ {t,o,h,l,c,v,vw,n} ] }, "next_page_token": ... }
         bar = data["bars"][symbol]
         ts = datetime.fromisoformat(bar["t"].replace("Z", "+00:00"))
-        if self.last_ts == ts:
-            return
+        while ts == self.last_ts:
+            #wait a bit and retry if we got the same candle as last time (API may not have updated yet)
+            print(f"At {datetime.now()}: Received same candle timestamp {str(ts)} as last time {str(self.last_ts)}, waiting for new candle...")
+            time.sleep(0.5)
+            r = self._session.get(url, params=params)
+            data = r.json()
+            bar = data["bars"][symbol]
+            ts = datetime.fromisoformat(bar["t"].replace("Z", "+00:00"))
+
+
+
         self.last_ts = ts
-        print(f"Got candle w timestamp: {ts}")
+        #print(f"Got candle w timestamp: {ts}")
         return Candle(
             symbol=symbol,
             ts=ts,
@@ -73,6 +83,35 @@ class AlpacaMarketData:
             vwap=float(bar["vw"]) if "vw" in bar and bar["vw"] is not None else None,
             trade_count=int(bar["n"]) if "n" in bar and bar["n"] is not None else None,
         )
+    
+    def get_historical_1min_candles(self, symbol: str, start_utc: datetime, end_utc: datetime) -> t.List[Candle]:
+        url = f"{self.base_url}/v2/stocks/bars"
+        params = {
+            "symbols": symbol,
+            "timeframe": "1Min",
+            "start": _iso(start_utc),
+            "end": _iso(end_utc),
+            "limit": 1000,  # max per request
+            "feed": self.feed,
+        }
+        r = self._session.get(url, params=params)
+        data = r.json()
+        bars = data["bars"][symbol]
+        candles = []
+        for bar in bars:
+            ts = datetime.fromisoformat(bar["t"].replace("Z", "+00:00"))
+            candles.append(Candle(
+                symbol=symbol,
+                ts=ts,
+                open=float(bar["o"]),
+                high=float(bar["h"]),
+                low=float(bar["l"]),
+                close=float(bar["c"]),
+                volume=int(bar["v"]),
+                vwap=float(bar["vw"]) if "vw" in bar and bar["vw"] is not None else None,
+                trade_count=int(bar["n"]) if "n" in bar and bar["n"] is not None else None,
+            ))
+        return candles
     
     def get_today_open_5min_candle(self, symbol: str) -> Candle:
         """
@@ -155,6 +194,11 @@ class AlpacaPaperTrading:
     
     def get_account(self):
         return self._get_account()
+    
+    def get_order_by_id(self, order_id: str) -> Json:
+        url = f"{self.base_url}/v2/orders/{order_id}"
+        r = self._session.get(url)
+        return r.json()
 
     def place_market_order(
         self,

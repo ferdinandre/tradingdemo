@@ -34,9 +34,10 @@ class TimeMgr:
     def wait_until_next_minute(self):
         now = datetime.now(self.eastern)
         next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        print(f"Waiting until next minute: {next_minute.time()} (current time: {now.time()})")
         delay = (next_minute - now).total_seconds()
         if delay > 0:
-            time.sleep(delay)
+            time.sleep(delay + 1)  # add small buffer to ensure we are in the next minute
 
 
     def wait_until(self, target_datetime):

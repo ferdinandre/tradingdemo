@@ -28,18 +28,17 @@ def should_push(stack: List[FVG], new_dir: str, gap_low: float, gap_high: float)
     if not stack:
         return abs(gap_high - gap_low) > 0.02
 
+    new_size = gap_high - gap_low
     top = stack[-1]
+    old_size = top.gap_high - top.gap_low
 
     if new_dir != top.dir:
         # opposite direction while structure still active -> ignore (wait for pops)
         return False
 
     # same direction continuation condition
-    if new_dir == "bull":
-        return gap_low > top.gap_low
-    else:
-        return gap_high < top.gap_high
-    
+    return new_size > old_size
+
 def stack_pop_invalidated(stack: List[FVG], bar_low: float, bar_high: float) -> None:
     # Pop while the top is invalidated (filled)
     while stack:

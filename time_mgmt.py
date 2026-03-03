@@ -7,6 +7,8 @@ class TimeMgr:
 
         self.eastern = ZoneInfo("America/New_York")
 
+        self.UTC = ZoneInfo("UTC")
+
         self.current_dt = datetime.now(self.eastern)
 
         self.next_day_930 = (self.current_dt + timedelta(days=1)).replace(

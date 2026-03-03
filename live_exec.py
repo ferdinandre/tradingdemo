@@ -338,8 +338,8 @@ def cut_loss(
 
     to_cut = min(float(to_cut), float(pos.remaining_qty))
 
-    # WHOLE SHARES ONLY (floor)
-    to_cut_int = int(math.floor(to_cut))
+    # WHOLE SHARES ONLY (ceil)
+    to_cut_int = int(math.ceil(to_cut))
     if to_cut_int <= 0:
         print("Nothing to cut after whole-share rounding")
         return 0.0

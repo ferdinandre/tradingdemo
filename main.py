@@ -64,55 +64,21 @@ cfg = ExecCfg(
     enable_loss_ladder=False,    # turn off if it chops too much
 )
 
-def on_new_candle(candle):
+def on_new_candle(candle, should_print = False):
     global candle0
     global candle1
-    print("Candle 0")
-    print_ohlc(candle0)
-    print("Candle 1")
-    print_ohlc(candle1)
-    print("Candle current")
-    print_ohlc(candle)
+    if should_print:
+        print("Candle 0")
+        print_ohlc(candle0)
+        print("Candle 1")
+        print_ohlc(candle1)
+        print("Candle current")
+        print_ohlc(candle)
     candle0 = candle1
     candle1 = candle
 
-def _floor_to_minute_utc(dt: datetime) -> datetime:
-    return dt.replace(second=0, microsecond=0)
-
-def wait_for_next_minute_and_get_entry(market_data, symbol: str, side: Side) -> float:
-    """
-    Block until we are inside the next minute, then take first quote as entry proxy.
-    - long  -> enter at ask
-    - short -> enter at bid
-    """
-    # wait until the next minute boundary (UTC)
-    now = datetime.now(timezone.utc)
-    next_min = _floor_to_minute_utc(now) + timedelta(minutes=1)
-    sleep_s = (next_min - now).total_seconds()
-    if sleep_s > 0:
-        time.sleep(sleep_s)
-
-    # now we are at/just after the minute boundary; grab first quote
-    q = market_data._get_latest_quote(symbol)  # you already have this
-    qq = q.get("quotes", {}).get(symbol, {})
-    bid = qq.get("bp")
-    ask = qq.get("ap")
-
-    if bid is None or ask is None:
-        # fallback: mid if one side missing; last resort close-ish
-        if bid is not None:
-            return float(bid)
-        if ask is not None:
-            return float(ask)
-        # if quote is empty, you can fallback to last close (not ideal)
-        bar = market_data.get_latest_1min_candle(symbol)
-        return float(bar.close) if bar else 0.0
-
-    return float(ask) if side == "long" else float(bid)
-
-pending: Optional[PendingEntry] = None
-
 def main():
+    needs_historical = False
     if timemgr.current_dt < timemgr.today_930 or timemgr.current_dt > timemgr.today_1630:
         print("Trading hasnt begun yet today, waiting until")
         if timemgr.current_dt < timemgr.today_930:
@@ -123,22 +89,38 @@ def main():
             timemgr.wait_until(timemgr.next_day_930)
     else:
         print("trading has begun")
+        needs_historical = True
     trading = True 
     in_position = False
-    last_ts = None  # last processed candle timestamp (UTC)
     need_to_enter = False
+    if needs_historical:
+        print("Getting historical data for today")
+        start = timemgr.today_930
+        end = datetime.datetime.now().replace(second=0, microsecond=0)
+        start_utc = start.astimezone(timemgr.UTC)
+        end_utc = end.astimezone(timemgr.UTC)
+        todays_1min_candles = market_data.get_historical_1min_candles(SYMBOL, start_utc=start_utc, end_utc=end_utc)
+        for candle in todays_1min_candles:
+            fvg.stack_pop_invalidated(fvg_stack, candle.low, candle.high)
+            if candle0 is not None and candle1 is not None:
+                current_fvg = fvg.detect_fvg(candle0, candle1, candle)
+                if current_fvg is not None:
+                    if fvg.should_push(fvg_stack, current_fvg.dir, gap_low=current_fvg.gap_low, gap_high=current_fvg.gap_high):
+                        fvg_stack.append(current_fvg)
+            on_new_candle(candle=candle, should_print=False)
     while trading:
         c = market_data.get_latest_1min_candle(SYMBOL)
         just_entered = False
         
         if need_to_enter:
+            print(f"Attempting to enter pos at: {datetime.datetime.now()}")
             side = "long" if candle1.high > candle1 .low else "short"
             enter_price = live_exec.get_entry_price(market_data, SYMBOL,side=side)
             current_equity = float(paper_trading.get_account()["equity"])
             qty = sizing.compute_live_qty(
                 paper_trading=paper_trading,
                 cfg=cfg,
-                entry_est=enter_price,
+                entry=enter_price,
                 stop = candle1.low if candle1.low < candle1.high else candle1.high,
                 side=fvg_stack[-1].dir
             )
@@ -212,21 +194,27 @@ def main():
                 if candle0 is not None and candle1 is not None:
                     current_fvg = fvg.detect_fvg(candle0, candle1, c)
                     if current_fvg is not None:
+                        print(f"Detected FVG at {datetime.datetime.now()}")
                         if fvg.should_push(fvg_stack, current_fvg.dir, gap_low=current_fvg.gap_low, gap_high=current_fvg.gap_high):
                             fvg_stack.append(current_fvg)
+                            print("FVG pushed to stack")
                             if current_fvg.dir == "bear" and not SHORT_ENABLED:
                                 print("Shorting not enabled")
                             else:
                                 need_to_enter = True #Entering on the next bar
+                                print("Entering on next bar")
                         else:
-                            print(f"FVG detected at {datetime.datetime.now()} but irrelevant (smaller than the previous)")
+                            print(f"FVG irrelevant (smaller than the previous)")
                     else:
                         print(f"No FVG detected at {datetime.datetime.now()}")
                 else:
                     print("Warming up 3-bar window...")
 
-        on_new_candle(c)
+        on_new_candle(c, True)
         timemgr.wait_until_next_minute()
+        trading = timemgr.market_still_open()
+        if not trading:
+            break
             
             
 if __name__ == "__main__":

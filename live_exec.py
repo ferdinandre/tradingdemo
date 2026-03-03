@@ -1,5 +1,6 @@
 from __future__ import annotations
 import datetime
+import math
 
 from dataapi import AlpacaPaperTrading
 from mathmagic import frac_cut_norm_log, frac_closed_norm_log
@@ -221,6 +222,7 @@ def enter_position(
         risk_per_share=float(risk_ps),
         init_qty=float(qty),
         remaining_qty=float(qty),
+        average_fill_price=fill.avg_fill_price
     )
 
 
@@ -266,7 +268,11 @@ def take_profit(
         return 0.0
 
     to_close = min(float(to_close), float(pos.remaining_qty))
-
+    # WHOLE SHARES ONLY (floor)
+    to_close_int = int(math.floor(to_close))
+    if to_close_int <= 0:
+        print("Nothing to take after whole-share rounding")
+        return 0.0
     # EXIT side is opposite of position side
     exit_side = "short" if pos.side == "long" else "long"
 
@@ -332,6 +338,11 @@ def cut_loss(
 
     to_cut = min(float(to_cut), float(pos.remaining_qty))
 
+    # WHOLE SHARES ONLY (floor)
+    to_cut_int = int(math.floor(to_cut))
+    if to_cut_int <= 0:
+        print("Nothing to cut after whole-share rounding")
+        return 0.0
     # EXIT side is opposite of position side
     exit_side = "short" if pos.side == "long" else "long"
 

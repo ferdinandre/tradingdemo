@@ -124,6 +124,7 @@ def main():
                 stop = candle1.low if candle1.low < candle1.high else candle1.high,
                 side=fvg_stack[-1].dir
             )
+            print(f"Computed quantity: {qty}")
             pos = live_exec.enter_position(
                 paper=paper_trading,
                 symbol=SYMBOL,
@@ -137,12 +138,12 @@ def main():
                 extended_hours=False,
                 qty=qty,
             )
-            
+            need_to_enter = False
             in_position = pos is not None
             if in_position:
                 print(f"Entered position with quantity {qty}, side: {side}, average fill price: {pos.average_fill_price}")
                 just_entered = True
-                need_to_enter = False
+                
         
         if not just_entered:
             account = paper_trading.get_account()

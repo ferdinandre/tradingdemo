@@ -28,7 +28,7 @@ def compute_live_qty(
         max_pos_value_mult=cfg.max_pos_value_mult,
         buying_power=bp,
         bp_buffer=0.995,
-        allow_fractional=True,
+        allow_fractional=False,
     )
 
 def compute_qty(
@@ -58,15 +58,7 @@ def compute_qty(
     # 3) hard cap by available buying power (MOST IMPORTANT here)
     if buying_power is not None:
         qty = min(qty, (buying_power * bp_buffer) / entry)
-    if side == "short":
-        # fractional shorting is not allowed in Alpaca; round down to whole shares
-        allow_fractional = False
-    # 4) rounding / minimums
-    if allow_fractional:
-        # don’t force >= 1; allow small sizes
-        print(f"Sizing: Computed raw qty: {qty}, allowing fractional shares")
-        return max(0.0, float(qty))
-    else:
-        # whole shares
-        print(f"Sizing: Computed raw qty: {qty}, rounding down to whole shares")
-        return float(int(qty))  # floor
+
+    # whole shares
+    print(f"Sizing: Computed raw qty: {qty}, rounding down to whole shares")
+    return float(int(qty))  # floor

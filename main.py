@@ -1,10 +1,8 @@
 from typing import List
 import dataapi
-import dummy_dataapi
 from models import FVG, Candle, PositionState, ExecCfg, Side, PendingEntry
 import sizing
 from time_mgmt import TimeMgr
-from dummy_timemgmt import DummyTimeMgr
 import fvg
 import live_exec
 import tomllib
@@ -57,13 +55,13 @@ def print_ohlc(candle: Candle) -> None:
 TP_R = 2
 
 cfg = ExecCfg(
-    risk_pct=0.0025,            # 0.25% per trade (live-safe with high frequency)
+    risk_pct=0.005,            # 0.25% per trade (live-safe with high frequency)
     max_pos_value_mult=1.0,     # don’t exceed 1x equity notional on longs
     alpha=2.0,
     r_max=2.0,
     beta=1.5,
     r_stop=1.0,
-    enable_loss_ladder=True,    # turn off if it chops too much
+    enable_loss_ladder=False,    # turn off if it chops too much
 )
 
 def on_new_candle(candle):
@@ -118,95 +116,117 @@ def main():
     if timemgr.current_dt < timemgr.today_930 or timemgr.current_dt > timemgr.today_1630:
         print("Trading hasnt begun yet today, waiting until")
         if timemgr.current_dt < timemgr.today_930:
-            print("Today 09:35 EST")
+            print("Today 09:30 EST")
             timemgr.wait_until(timemgr.today_930)
         elif timemgr.current_dt > timemgr.today_1630:
-            print("Tomorrow 09:35 EST")
-            timemgr.wait_until(timemgr.next_day_935)
+            print("Tomorrow 09:30 EST")
+            timemgr.wait_until(timemgr.next_day_930)
     else:
         print("trading has begun")
-        timemgr.wait_until(timemgr.today_935)
     trading = True 
     in_position = False
     last_ts = None  # last processed candle timestamp (UTC)
-
+    need_to_enter = False
     while trading:
         c = market_data.get_latest_1min_candle(SYMBOL)
+        just_entered = False
+        
+        if need_to_enter:
+            side = "long" if candle1.high > candle1 .low else "short"
+            enter_price = live_exec.get_entry_price(market_data, SYMBOL,side=side)
+            current_equity = float(paper_trading.get_account()["equity"])
+            qty = sizing.compute_live_qty(
+                paper_trading=paper_trading,
+                cfg=cfg,
+                entry_est=enter_price,
+                stop = candle1.low if candle1.low < candle1.high else candle1.high,
+                side=fvg_stack[-1].dir
+            )
+            pos = live_exec.enter_position(
+                paper=paper_trading,
+                symbol=SYMBOL,
+                fvg_dir=fvg_stack[-1].dir,
+                entry_price=enter_price,
+                signal_low=float(candle1.low),
+                signal_high=float(candle1.high),
+                tp_r=TP_R,
+                equity=current_equity,
+                cfg=cfg,
+                extended_hours=False,
+                qty=qty,
+            )
+            
+            in_position = pos is not None
+            if in_position:
+                print(f"Entered position with quantity {qty}, side: {side}, average fill price: {pos.average_fill_price}")
+                just_entered = True
+                need_to_enter = False
+        
+        if not just_entered:
+            account = paper_trading.get_account()
+            current_equity = float(account["equity"])
+            bp = float(account["buying_power"])
+            print(f"Got candle w timestamp: {c.ts}")
+            print(f"Current equity: {current_equity} | BP: {bp}")
 
-        if c is None:
-            time.sleep(0.2)
-            continue
+            fvg.stack_pop_invalidated(fvg_stack, c.low, c.high)
+            
+            #Manage existing position
+            if in_position and pos is not None:
+                # 1) hard exit
+                reason = live_exec.hard_exit(
+                    paper=paper_trading,
+                    pos=pos,
+                    bar_high=c.high,
+                    bar_low=c.low,
+                    extended_hours=False,
+                    timemgr=timemgr
+                )
+                if reason is not None:
+                    in_position = False
+                    pos = None
+                else:
+                    # 2) cut loss (priority over TP)
+                    live_exec.cut_loss(
+                        paper=paper_trading, pos=pos,
+                        bar_high=c.high, bar_low=c.low,
+                        cfg=cfg
+                    )
+                    if pos.remaining_qty <= 0:
+                        in_position = False
+                        pos = None
+                    else:
+                        # 3) take profit
+                        live_exec.take_profit(
+                            paper=paper_trading, pos=pos,
+                            bar_high=c.high, bar_low=c.low,
+                            cfg=cfg
+                        )
+                        if pos.remaining_qty <= 0:
+                            in_position = False
+                            pos = None
 
-        # only process each candle once
-        if last_ts is not None and c.ts == last_ts:
-            time.sleep(0.2)
-            continue
 
-        last_ts = c.ts  # mark processed ASAP
-
-        # ---- NOW process candle c immediately ----
-        account = paper_trading.get_account()
-        current_equity = float(account["equity"])
-        bp = float(account["buying_power"])
-        print(f"Got candle w timestamp: {c.ts}")
-        print(f"Current equity: {current_equity} | BP: {bp}")
-
-        fvg.stack_pop_invalidated(fvg_stack, c.low, c.high)
-
-        if in_position and pos is not None:
-            live_exec.take_profit(paper=paper_trading, pos=pos, bar_high=c.high, bar_low=c.low, cfg=cfg)
-            live_exec.cut_loss(paper=paper_trading, pos=pos, bar_high=c.high, bar_low=c.low, cfg=cfg)
-            reason = live_exec.hard_exit(paper=paper_trading, pos=pos, bar_high=c.high, bar_low=c.low, extended_hours=False)
-            if reason is not None:
-                in_position = False
-                pos = None
-
-        else:
-            # update 3-bar window first
-            if candle0 is not None and candle1 is not None:
-                current_fvg = fvg.detect_fvg(candle0, candle1, c)
-                if current_fvg is not None:
-                    if fvg.should_push(fvg_stack, current_fvg.dir, gap_low=current_fvg.gap_low, gap_high=current_fvg.gap_high):
-                        fvg_stack.append(current_fvg)
-
-                        if current_fvg.dir == "bear" and not SHORT_ENABLED:
-                            print("Shorting not enabled")
-                        else:
-                            side: Side = "long" if current_fvg.dir == "bull" else "short"
-
-                            # ENTRY NOW (right after bar close) -> this is effectively "next bar open" in live time
-                            # because you're executing at the boundary when the new minute begins.
-                            entry_est = live_exec.get_entry_price(market_data, SYMBOL, side=side)
-
-                            qty = sizing.compute_live_qty(
-                                paper_trading=paper_trading,
-                                cfg=cfg,
-                                side=side,
-                                entry_est=entry_est,
-                                signal_low=float(c.low),
-                                signal_high=float(c.high),
-                            )
-
-                            pos = live_exec.enter_position(
-                                paper=paper_trading,
-                                symbol=SYMBOL,
-                                fvg_dir=current_fvg.dir,
-                                entry_price=entry_est,
-                                signal_low=float(c.low),
-                                signal_high=float(c.high),
-                                tp_r=TP_R,
-                                equity=float(paper_trading.get_account()["equity"]),
-                                cfg=cfg,
-                                qty=qty,
-                                extended_hours=False,
-                            )
-                            in_position = pos is not None
             else:
-                print("Warming up 3-bar window...")
+                # update 3-bar window first
+                if candle0 is not None and candle1 is not None:
+                    current_fvg = fvg.detect_fvg(candle0, candle1, c)
+                    if current_fvg is not None:
+                        if fvg.should_push(fvg_stack, current_fvg.dir, gap_low=current_fvg.gap_low, gap_high=current_fvg.gap_high):
+                            fvg_stack.append(current_fvg)
+                            if current_fvg.dir == "bear" and not SHORT_ENABLED:
+                                print("Shorting not enabled")
+                            else:
+                                need_to_enter = True #Entering on the next bar
+                        else:
+                            print(f"FVG detected at {datetime.datetime.now()} but irrelevant (smaller than the previous)")
+                    else:
+                        print(f"No FVG detected at {datetime.datetime.now()}")
+                else:
+                    print("Warming up 3-bar window...")
 
         on_new_candle(c)
-
-        trading = timemgr.market_still_open()
+        timemgr.wait_until_next_minute()
             
             
 if __name__ == "__main__":

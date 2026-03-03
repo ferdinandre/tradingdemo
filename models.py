@@ -44,6 +44,8 @@ class PositionState:
     max_r_seen: float = 0.0        # MFE in R
     max_neg_r_seen: float = 0.0    # MAE in R
 
+    average_fill_price: float = 0.0 # Average fill price upon entering the position
+
 @dataclass
 class ExecCfg:
     # position sizing

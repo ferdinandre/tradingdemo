@@ -44,7 +44,7 @@ def compute_qty(
     allow_fractional: bool = True,
 ) -> float:
     if risk_per_share <= 0 or entry <= 0:
-        print(f"Sizing: Invalid parameters: risk_per_share={risk_per_share}, entry={entry}. Returning qty=0.")
+        _logger.log(f"Sizing: Invalid parameters: risk_per_share={risk_per_share}, entry={entry}. Returning qty=0.")
         return 0.0
 
     # 1) risk-based qty
@@ -60,5 +60,5 @@ def compute_qty(
         qty = min(qty, (buying_power * bp_buffer) / entry)
 
     # whole shares
-    print(f"Sizing: Computed raw qty: {qty}, rounding down to whole shares")
+    _logger.log(f"Sizing: Computed raw qty: {qty}, rounding down to whole shares")
     return float(int(qty))  # floor

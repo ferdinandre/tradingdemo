@@ -7,6 +7,8 @@ from models import Candle
 import requests
 import time
 
+import mylogger
+
 
 Json = t.Dict[str, t.Any]
 
@@ -23,7 +25,7 @@ class AlpacaMarketData:
     Market Data via Alpaca Stocks Data API (v2) using requests.
     Base: https://data.alpaca.markets
     """
-    def __init__(self, api_key: str, api_secret: str, feed: str = "iex"):
+    def __init__(self, api_key: str, api_secret: str, feed: str = "iex", logger: mylogger.Logger | None = None):
         self.api_key = api_key
         self.api_secret = api_secret
         self.base_url = "https://data.alpaca.markets"
@@ -34,6 +36,7 @@ class AlpacaMarketData:
             "APCA-API-KEY-ID": self.api_key,
             "APCA-API-SECRET-KEY": self.api_secret,
         })
+        self._logger = logger
 
     def _get_latest_quote(self, symbol: str):
         url = f"{self.base_url}/v2/stocks/quotes/latest"
@@ -51,9 +54,9 @@ class AlpacaMarketData:
             "symbols": symbol,
             "feed": self.feed,
         }
-        #print(f"Sent candle response at {datetime.now()}")
+        #_logger.log(f"Sent candle response at {datetime.now()}")
         r = self._session.get(url, params=params)
-        #print(f"Got candle response at {datetime.now()}")
+        #_logger.log(f"Got candle response at {datetime.now()}")
         data = r.json()
         
         # Shape: { "bars": { "TSLA": [ {t,o,h,l,c,v,vw,n} ] }, "next_page_token": ... }
@@ -61,7 +64,7 @@ class AlpacaMarketData:
         ts = datetime.fromisoformat(bar["t"].replace("Z", "+00:00"))
         while ts == self.last_ts:
             #wait a bit and retry if we got the same candle as last time (API may not have updated yet)
-            print(f"At {datetime.now()}: Received same candle timestamp {str(ts)} as last time {str(self.last_ts)}, waiting for new candle...")
+            self._logger.log(f"At {datetime.now()}: Received same candle timestamp {str(ts)} as last time {str(self.last_ts)}, waiting for new candle...")
             time.sleep(0.5)
             r = self._session.get(url, params=params)
             data = r.json()
@@ -71,7 +74,7 @@ class AlpacaMarketData:
 
 
         self.last_ts = ts
-        #print(f"Got candle w timestamp: {ts}")
+        #_logger.log(f"Got candle w timestamp: {ts}")
         return Candle(
             symbol=symbol,
             ts=ts,
@@ -142,7 +145,7 @@ class AlpacaMarketData:
         }
 
         r = self._session.get(url, params=params)
-        print(r)
+        self._logger.log(r)
         bar = r.json()["bars"][symbol][0]
 
         ts = datetime.fromisoformat(bar["t"].replace("Z", "+00:00"))

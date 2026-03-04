@@ -1,18 +1,18 @@
+import mylogger
 from typing import List
 import dataapi
-from models import FVG, Candle, PositionState, ExecCfg, Side, PendingEntry
+from models import FVG, Candle, PositionState, ExecCfg
 import sizing
 from time_mgmt import TimeMgr
 import fvg
 import live_exec
 import tomllib
 import datetime
-from datetime import timezone, timedelta
-import time
-from typing import Optional
-#TODO New strategy: first 5 min candle: look for a fvg that breaks throguh first5min low or high, wait for retest? i guess a candle high going within the same fvg, then an engulfing "??" then enter 3:1 RR"
+#TODO: add logging (python logging module) but keep _logger.log statements, with log levels and timestamps. For now, _logger.logs are fine for simplicity.
 with open("creds.toml", "rb") as f:
     toml = tomllib.load(f)
+
+_logger = mylogger.Logger()
 
 API_KEY = toml["key_id"]
 
@@ -20,17 +20,29 @@ API_SECRET = toml["secret_key"]
 
 SHORT_ENABLED = bool(toml["short_enabled"])
 
-print(SHORT_ENABLED)
+_logger.log(SHORT_ENABLED)
 
 SYMBOL = "AAPL"
 
-print(SHORT_ENABLED)
+_logger.log(SHORT_ENABLED)
 
-market_data = dataapi.AlpacaMarketData(api_key=API_KEY, api_secret=API_SECRET, feed="sip")
+cfg = ExecCfg(
+    risk_pct=0.005,            # 0.25% per trade (live-safe with high frequency)
+    max_pos_value_mult=1.0,     # don’t exceed 1x equity notional on longs
+    alpha=2.0,
+    r_max=2.0,
+    beta=1.5,
+    r_stop=1.0,
+    enable_loss_ladder=False    # turn off if it chops too much
+)
 
-paper_trading = dataapi.AlpacaPaperTrading(api_key=API_KEY, api_secret=API_SECRET)
+market_data = dataapi.AlpacaMarketData(api_key=API_KEY, api_secret=API_SECRET, feed="sip", logger=_logger)
+
+paper_trading = dataapi.AlpacaPaperTrading(api_key=API_KEY, api_secret=API_SECRET, _logger=_logger)
 
 timemgr = TimeMgr()
+
+executor = live_exec.LiveExecutor(paper_trading=paper_trading, timemgr=timemgr, cfg=cfg, logger=_logger)
 
 fvg_stack: List[FVG] = []
 
@@ -42,9 +54,9 @@ candle1: Candle | None = None #second youngest candle
 
 def print_ohlc(candle: Candle) -> None:
     if candle is None:
-        print("Candle: None")
+        _logger.log("Candle: None")
         return
-    print(
+    _logger.log(
         f"[{candle.symbol} {candle.ts}] "
         f"O={candle.open:.2f} "
         f"H={candle.high:.2f} "
@@ -54,25 +66,17 @@ def print_ohlc(candle: Candle) -> None:
 
 TP_R = 2
 
-cfg = ExecCfg(
-    risk_pct=0.005,            # 0.25% per trade (live-safe with high frequency)
-    max_pos_value_mult=1.0,     # don’t exceed 1x equity notional on longs
-    alpha=2.0,
-    r_max=2.0,
-    beta=1.5,
-    r_stop=1.0,
-    enable_loss_ladder=False,    # turn off if it chops too much
-)
+
 
 def on_new_candle(candle, should_print = False):
     global candle0
     global candle1
     if should_print:
-        print("Candle 0")
+        _logger.log("Candle 0")
         print_ohlc(candle0)
-        print("Candle 1")
+        _logger.log("Candle 1")
         print_ohlc(candle1)
-        print("Candle current")
+        _logger.log("Candle current")
         print_ohlc(candle)
     candle0 = candle1
     candle1 = candle
@@ -80,21 +84,21 @@ def on_new_candle(candle, should_print = False):
 def main():
     needs_historical = False
     if timemgr.current_dt < timemgr.today_930 or timemgr.current_dt > timemgr.today_1630:
-        print("Trading hasnt begun yet today, waiting until")
+        _logger.log("Trading hasnt begun yet today, waiting until")
         if timemgr.current_dt < timemgr.today_930:
-            print("Today 09:30 EST")
+            _logger.log("Today 09:30 EST")
             timemgr.wait_until(timemgr.today_930)
         elif timemgr.current_dt > timemgr.today_1630:
-            print("Tomorrow 09:30 EST")
+            _logger.log("Tomorrow 09:30 EST")
             timemgr.wait_until(timemgr.next_day_930)
     else:
-        print("trading has begun")
+        _logger.log("trading has begun")
         needs_historical = True
     trading = True 
     in_position = False
     need_to_enter = False
     if needs_historical:
-        print("Getting historical data for today")
+        _logger.log("Getting historical data for today")
         start = timemgr.today_930
         end = datetime.datetime.now().replace(second=0, microsecond=0)
         start_utc = start.astimezone(timemgr.UTC)
@@ -113,9 +117,10 @@ def main():
         just_entered = False
         
         if need_to_enter:
-            print(f"Attempting to enter pos at: {datetime.datetime.now()}")
+            _logger.log(f"Attempting to enter pos at: {datetime.datetime.now()}")
             side = "long" if candle1.high > candle1 .low else "short"
-            enter_price = live_exec.get_entry_price(market_data, SYMBOL,side=side)
+            ##TODO
+            enter_price = executor.get_entry_price(market_data, SYMBOL,side=side)
             current_equity = float(paper_trading.get_account()["equity"])
             qty = sizing.compute_live_qty(
                 paper_trading=paper_trading,
@@ -124,8 +129,9 @@ def main():
                 stop = candle1.low if candle1.low < candle1.high else candle1.high,
                 side=fvg_stack[-1].dir
             )
-            print(f"Computed quantity: {qty}")
-            pos = live_exec.enter_position(
+            _logger.log(f"Computed quantity: {qty}")
+            ##TODO
+            pos = executor.enter_position(
                 paper=paper_trading,
                 symbol=SYMBOL,
                 fvg_dir=fvg_stack[-1].dir,
@@ -141,7 +147,7 @@ def main():
             need_to_enter = False
             in_position = pos is not None
             if in_position:
-                print(f"Entered position with quantity {qty}, side: {side}, average fill price: {pos.average_fill_price}")
+                _logger.log(f"Entered position with quantity {qty}, side: {side}, average fill price: {pos.average_fill_price}")
                 just_entered = True
                 
         
@@ -149,15 +155,15 @@ def main():
             account = paper_trading.get_account()
             current_equity = float(account["equity"])
             bp = float(account["buying_power"])
-            print(f"Got candle w timestamp: {c.ts}")
-            print(f"Current equity: {current_equity} | BP: {bp}")
+            _logger.log(f"Got candle w timestamp: {c.ts}")
+            _logger.log(f"Current equity: {current_equity} | BP: {bp}")
 
             fvg.stack_pop_invalidated(fvg_stack, c.low, c.high)
             
             #Manage existing position
             if in_position and pos is not None:
                 # 1) hard exit
-                reason = live_exec.hard_exit(
+                reason = executor.hard_exit(
                     paper=paper_trading,
                     pos=pos,
                     bar_high=c.high,
@@ -170,7 +176,7 @@ def main():
                     pos = None
                 else:
                     # 2) cut loss (priority over TP)
-                    live_exec.cut_loss(
+                    executor.cut_loss(
                         paper=paper_trading, pos=pos,
                         bar_high=c.high, bar_low=c.low,
                         cfg=cfg
@@ -180,7 +186,7 @@ def main():
                         pos = None
                     else:
                         # 3) take profit
-                        live_exec.take_profit(
+                        executor.take_profit(
                             paper=paper_trading, pos=pos,
                             bar_high=c.high, bar_low=c.low,
                             cfg=cfg
@@ -195,21 +201,21 @@ def main():
                 if candle0 is not None and candle1 is not None:
                     current_fvg = fvg.detect_fvg(candle0, candle1, c)
                     if current_fvg is not None:
-                        print(f"Detected FVG at {datetime.datetime.now()}")
+                        _logger.log(f"Detected FVG at {datetime.datetime.now()}")
                         if fvg.should_push(fvg_stack, current_fvg.dir, gap_low=current_fvg.gap_low, gap_high=current_fvg.gap_high):
                             fvg_stack.append(current_fvg)
-                            print("FVG pushed to stack")
+                            _logger.log("FVG pushed to stack")
                             if current_fvg.dir == "bear" and not SHORT_ENABLED:
-                                print("Shorting not enabled")
+                                _logger.log("Shorting not enabled")
                             else:
                                 need_to_enter = True #Entering on the next bar
-                                print("Entering on next bar")
+                                _logger.log("Entering on next bar")
                         else:
-                            print(f"FVG irrelevant (smaller than the previous)")
+                            _logger.log(f"FVG irrelevant (smaller than the previous)")
                     else:
-                        print(f"No FVG detected at {datetime.datetime.now()}")
+                        _logger.log(f"No FVG detected at {datetime.datetime.now()}")
                 else:
-                    print("Warming up 3-bar window...")
+                    _logger.log("Warming up 3-bar window...")
 
         on_new_candle(c, True)
         timemgr.wait_until_next_minute()

@@ -120,14 +120,15 @@ def main():
             _logger.log(f"Attempting to enter pos at: {datetime.datetime.now()}")
             side = "long" if candle1.high > candle1 .low else "short"
             ##TODO
-            enter_price = executor.get_entry_price(market_data, SYMBOL,side=side)
+            enter_price = executor.get_entry_price(md = market_data, symbol= SYMBOL,side=side)
             current_equity = float(paper_trading.get_account()["equity"])
             qty = sizing.compute_live_qty(
                 paper_trading=paper_trading,
                 cfg=cfg,
                 entry=enter_price,
                 stop = candle1.low if candle1.low < candle1.high else candle1.high,
-                side=fvg_stack[-1].dir
+                side=fvg_stack[-1].dir,
+                _logger = _logger
             )
             _logger.log(f"Computed quantity: {qty}")
             ##TODO

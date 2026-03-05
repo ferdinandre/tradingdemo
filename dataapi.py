@@ -173,7 +173,7 @@ class AlpacaPaperTrading:
     Paper Trading via Alpaca Trading API (v2) using requests.
     Base: https://paper-api.alpaca.markets
     """
-    def __init__(self, api_key: str, api_secret: str):
+    def __init__(self, api_key: str, api_secret: str, _logger: mylogger.Logger):
         self.api_key = api_key
         self.api_secret = api_secret
         self.base_url = "https://paper-api.alpaca.markets"
@@ -184,6 +184,7 @@ class AlpacaPaperTrading:
             "APCA-API-SECRET-KEY": self.api_secret,
             "Content-Type": "application/json",
         })
+        self._logger = _logger
 
     def _post_order(self, payload: Json) -> Json:
         url = f"{self.base_url}/v2/orders"

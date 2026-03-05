@@ -143,7 +143,7 @@ class LiveExecutor:
         )
 
 
-    def get_entry_price(md, symbol: str, side: Side) -> float:
+    def get_entry_price(self, md: AlpacaPaperTrading, symbol: str, side: Side) -> float:
         resp = md._get_latest_quote(symbol)
 
         quotes = resp.get("quotes", {})

@@ -1,6 +1,7 @@
 from models import Side, ExecCfg, PositionState
 from typing import Optional
 import live_exec
+import mylogger
 
 
 def compute_live_qty(
@@ -10,6 +11,7 @@ def compute_live_qty(
     entry: float,
     stop: float,
     side: Side,
+    _logger: Logger
 ) -> float:
     acct = paper_trading.get_account()
     equity = float(acct["equity"])
@@ -29,6 +31,7 @@ def compute_live_qty(
         buying_power=bp,
         bp_buffer=0.995,
         allow_fractional=False,
+        _logger = _logger
     )
 
 def compute_qty(
@@ -42,6 +45,7 @@ def compute_qty(
     buying_power: float | None = None,   # pass from account
     bp_buffer: float = 0.995,            # leave ~0.5% headroom for spread/slip/fees
     allow_fractional: bool = True,
+    _logger: mylogger.Logger
 ) -> float:
     if risk_per_share <= 0 or entry <= 0:
         _logger.log(f"Sizing: Invalid parameters: risk_per_share={risk_per_share}, entry={entry}. Returning qty=0.")

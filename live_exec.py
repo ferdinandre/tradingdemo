@@ -40,7 +40,7 @@ class LiveExecutor:
         self.cfg = cfg
         self._logger = logger
 
-    def _safe_float(x) -> Optional[float]:
+    def _safe_float(self, x) -> Optional[float]:
         if x is None:
             return None
         try:
@@ -49,7 +49,7 @@ class LiveExecutor:
             return None
 
 
-    def _safe_str(x) -> str:
+    def _safe_str(self, x) -> str:
         return "" if x is None else str(x)
 
 
@@ -60,11 +60,11 @@ class LiveExecutor:
     #   place_market_order(..., long=True)  => buy (increase long / cover short)
     #   place_market_order(..., long=False) => sell (reduce long / increase short)
 
-    def open_long_flag(side: Side) -> bool:
+    def open_long_flag(self, side: Side) -> bool:
         # to OPEN long => buy; to OPEN short => sell/short
         return True if side == "long" else False
 
-    def close_long_flag(side: Side) -> bool:
+    def close_long_flag(self, side: Side) -> bool:
         # to CLOSE long => sell; to CLOSE short => buy/cover
         return False if side == "long" else True
 

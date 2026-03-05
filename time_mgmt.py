@@ -31,6 +31,10 @@ class TimeMgr:
             hour=16, minute=30, second=0, microsecond=0
         )
 
+        self.today_1625 = self.current_dt.replace(
+            hour=16, minute=25, second=0, microsecond=0
+        )
+
 
 
     def wait_until_next_minute(self):
@@ -52,6 +56,6 @@ class TimeMgr:
 
     def market_still_open(self):
         now = datetime.now(self.eastern)
-        return (self.today_1630 - now).total_seconds() > 60
+        return (self.today_1625 - now).total_seconds() > 60
 
 

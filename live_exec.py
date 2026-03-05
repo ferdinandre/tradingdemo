@@ -288,7 +288,7 @@ class LiveExecutor:
         fill = self.place_and_confirm_fill(
             paper,
             symbol=pos.symbol,
-            qty=to_close,
+            qty=to_close_int,
             side=exit_side,
             extended_hours=extended_hours,
             timeout_s=30,
@@ -359,7 +359,7 @@ class LiveExecutor:
         fill = self.place_and_confirm_fill(
             paper,
             symbol=pos.symbol,
-            qty=to_cut,
+            qty=to_cut_int,
             side=exit_side,
             extended_hours=extended_hours,
             timeout_s=30,

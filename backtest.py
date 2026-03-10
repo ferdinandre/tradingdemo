@@ -230,11 +230,11 @@ def backtest(
 
                     pnl = pnl_per_share * to_close
                     equity += pnl
-                    realized_pnl_current_trade += pnl
                     remaining_shares -= to_close
 
                     # If fully scaled out, end trade here (no further stop/tp checks needed)
                     if remaining_shares == 0:
+                        realized_pnl_current_trade += pnl
                         trades.append(Trade(
                             entry_ts=entry_ts,
                             exit_ts=ts,
@@ -242,9 +242,9 @@ def backtest(
                             entry=entry,
                             stop=stop,
                             tp=tp,
-                            shares=init_shares,
-                            exit_price=fill_price,
-                            exit_reason="scaled_out",
+                            shares=shares,
+                            exit_price=exit_price,
+                            exit_reason=exit_reason,
                             pnl=realized_pnl_current_trade,
                             equity_after=equity,
                         ))
@@ -363,10 +363,11 @@ def backtest(
                             if i + 1 < len(day_df):
                                 next_bar = day_df.iloc[i + 1]
                                 raw_entry = float(next_bar["open"])
-                                entry_price = (raw_entry + slippage) if signal_dir == "long" else (raw_entry - slippage)
-                                entry_time = next_bar["ts_et"]
+
 
                                 if fvg["dir"] == "bull":
+                                    entry_price = (raw_entry + slippage) if signal_dir == "long" else (raw_entry - slippage)
+                                    entry_time = next_bar["ts_et"]
                                     signal_dir = "long"
                                     signal_stop = float(b2["low"])
                                     signal_rps = entry_price - signal_stop
@@ -375,6 +376,8 @@ def backtest(
                                         signaled = True
                                 else:
                                     signal_dir = "short"
+                                    entry_price = (raw_entry + slippage) if signal_dir == "long" else (raw_entry - slippage)
+                                    entry_time = next_bar["ts_et"]
                                     signal_stop = float(b2["high"])
                                     signal_rps = signal_stop - entry_price
                                     if signal_rps > 0:

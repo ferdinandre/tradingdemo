@@ -11,7 +11,7 @@ def compute_live_qty(
     entry: float,
     stop: float,
     side: Side,
-    _logger: Logger
+    _logger: mylogger.Logger
 ) -> float:
     acct = paper_trading.get_account()
     equity = float(acct["equity"])

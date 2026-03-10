@@ -16,7 +16,7 @@ class TimeMgr:
         )
 
         self.today_930 = self.current_dt.replace(
-                hour=9, minute=30, second=0, microsecond=0
+                hour=9, minute=31, second=0, microsecond=0
         )
 
         self.next_day_935 = (self.current_dt + timedelta(days=1)).replace(

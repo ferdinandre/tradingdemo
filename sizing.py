@@ -19,6 +19,7 @@ def compute_live_qty(
 
     rps = (entry - stop) if side == "long" else (stop - entry)
     if rps <= 0:
+        print(f"Invalid entry/stop: entry={entry}, stop={stop}, side={side}. Not entering.")
         return 0.0
 
     return compute_qty(

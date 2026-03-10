@@ -25,9 +25,9 @@ def position_manager_loop(
       - otherwise fetch latest price info / quote
       - run cut_loss and take_profit while still holding the lock
     """
-
+    time.sleep(5) # initial sleep to stagger with main thread's market data fetch
     while not stop_event.is_set():
-        time.sleep(10) # initial sleep to stagger with main thread's market data fetch
+        
         try:
             should_clear = False
             print(f"position_manager_loop tick at {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -53,6 +53,7 @@ def position_manager_loop(
                             pos=pos,
                             px=px,
                             cfg=cfg,
+                            extended_hours=False,
                         )
                         print(f"cut_loss check: did_stop={did_stop}, pos.remaining_qty={pos.remaining_qty}")
 

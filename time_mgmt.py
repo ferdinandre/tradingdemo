@@ -43,7 +43,7 @@ class TimeMgr:
         print(f"Waiting until next minute: {next_minute.time()} (current time: {now.time()})")
         delay = (next_minute - now).total_seconds()
         if delay > 0:
-            time.sleep(delay + 1)  # add small buffer to ensure we are in the next minute
+            time.sleep(delay + .2)  # add small buffer to ensure we are in the next minute
 
 
     def wait_until(self, target_datetime):

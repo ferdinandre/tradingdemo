@@ -56,6 +56,10 @@ class AlpacaMarketData:
         }
         #_logger.log(f"Sent candle response at {datetime.now()}")
         r = self._session.get(url, params=params)
+        # if response is not 200, raise an exception
+        if r.status_code != 200:
+            self._logger.log(f"Error fetching latest bar: {r.status_code} {r.text}")
+            r.raise_for_status()
         #_logger.log(f"Got candle response at {datetime.now()}")
         data = r.json()
         

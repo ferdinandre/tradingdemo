@@ -191,18 +191,21 @@ class LiveExecutor:
         Enter on market, compute stop/tp from signal candle extreme and tp_r.
         Returns PositionState if order sent, else None.
         """
+        self._logger.log(f"Preparing to enter position for {symbol} with entry_price={entry_price}, signal_low={signal_low}, signal_high={signal_high}, tp_r={tp_r}, equity={equity}, cfg={cfg}, extended_hours={extended_hours}, qty={qty}")
         side: Side = "long" if fvg_dir == "bull" else "short"
 
         if side == "long":
             stop = float(signal_low)
             risk_ps = entry_price - stop
             if risk_ps <= 0:
+                print(f"Invalid long entry: entry_price={entry_price} <= stop={stop}. Not entering.")
                 return None
             tp = entry_price + tp_r * risk_ps
         else:
             stop = float(signal_high)
             risk_ps = stop - entry_price
             if risk_ps <= 0:
+                print(f"Invalid short entry: entry_price={entry_price} >= stop={stop}. Not entering.")
                 return None
             tp = entry_price - tp_r * risk_ps
         self._logger.log(f"Entering position {side}, with quantity {qty}")
@@ -239,8 +242,7 @@ class LiveExecutor:
         *,
         paper,
         pos: PositionState,
-        bar_high: float,
-        bar_low: float,
+        px: float,
         cfg: ExecCfg,
         extended_hours: bool = False,
     ) -> float:
@@ -258,11 +260,9 @@ class LiveExecutor:
 
         # compute favorable excursion in R for THIS bar
         if pos.side == "long":
-            mfe = float(bar_high) - pos.entry
-            cur_r = mfe / pos.risk_per_share
-        else:  # short
-            mfe = pos.entry - float(bar_low)
-            cur_r = mfe / pos.risk_per_share
+            cur_r = (float(px) - pos.entry) / pos.risk_per_share
+        else:
+            cur_r = (pos.entry - float(px)) / pos.risk_per_share
 
         if cur_r > pos.max_r_seen:
             pos.max_r_seen = cur_r
@@ -309,8 +309,7 @@ class LiveExecutor:
         *,
         paper,
         pos: PositionState,
-        bar_high: float,
-        bar_low: float,
+        px: float,
         cfg: ExecCfg,
         extended_hours: bool = False,
     ) -> float:
@@ -328,11 +327,9 @@ class LiveExecutor:
 
         # compute adverse excursion in R for THIS bar (>=0)
         if pos.side == "long":
-            mae = pos.entry - float(bar_low)
-            neg_r = mae / pos.risk_per_share
+            neg_r = (pos.entry - float(px)) / pos.risk_per_share
         else:  # short
-            mae = float(bar_high) - pos.entry
-            neg_r = mae / pos.risk_per_share
+            neg_r = (float(px) - pos.entry) / pos.risk_per_share
 
         if neg_r > pos.max_neg_r_seen:
             pos.max_neg_r_seen = neg_r
@@ -377,21 +374,17 @@ class LiveExecutor:
         *,
         paper,
         pos: PositionState,
-        bar_high: float,
-        bar_low: float,
+        px: float,
         extended_hours: bool = False,
         timemgr: TimeMgr,
     ) -> Optional[str]:
-        """
-        Enforce stop/TP/EOD exits with MARKET orders.
-        Returns exit_reason if position flattened else None.
-        """
+ 
         self._logger.log("hard exit running")
+
         if pos.remaining_qty <= 0:
             return "flat"
 
-        h = float(bar_high)
-        l = float(bar_low)
+        px = float(px)
 
         # EXIT side is opposite of current position
         exit_side = "short" if pos.side == "long" else "long"
@@ -412,7 +405,9 @@ class LiveExecutor:
 
             # If we didn't fully flatten (partial fill), keep position open.
             if pos.remaining_qty > 0:
-                self._logger.log(f"Hard-exit {reason}: PARTIAL fill {filled}, remaining {pos.remaining_qty}")
+                self._logger.log(
+                    f"Hard-exit {reason}: PARTIAL fill {filled}, remaining {pos.remaining_qty}"
+                )
                 return f"{reason}_partial"
 
             pos.remaining_qty = 0.0
@@ -420,11 +415,11 @@ class LiveExecutor:
             return reason
 
         # stop-first (conservative)
-        stop_hit = (l <= pos.stop) if pos.side == "long" else (h >= pos.stop)
+        stop_hit = (px <= pos.stop) if pos.side == "long" else (px >= pos.stop)
         if stop_hit:
             return _exit_all("stop")
 
-        tp_hit = (h >= pos.tp) if pos.side == "long" else (l <= pos.tp)
+        tp_hit = (px >= pos.tp) if pos.side == "long" else (px <= pos.tp)
         if tp_hit:
             return _exit_all("tp")
 

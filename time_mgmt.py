@@ -11,11 +11,11 @@ class TimeMgr:
 
         self.current_dt = datetime.now(self.eastern)
 
-        self.next_day_930 = (self.current_dt + timedelta(days=1)).replace(
-            hour=9, minute=39, second=0, microsecond=0
+        self.next_day_931= (self.current_dt + timedelta(days=1)).replace(
+            hour=9, minute=31, second=0, microsecond=0
         )
 
-        self.today_930 = self.current_dt.replace(
+        self.today_931 = self.current_dt.replace(
                 hour=9, minute=31, second=0, microsecond=0
         )
 
@@ -43,7 +43,7 @@ class TimeMgr:
         print(f"Waiting until next minute: {next_minute.time()} (current time: {now.time()})")
         delay = (next_minute - now).total_seconds()
         if delay > 0:
-            time.sleep(delay + .2)  # add small buffer to ensure we are in the next minute
+            time.sleep(delay)  # add small buffer to ensure we are in the next minute
 
 
     def wait_until(self, target_datetime):

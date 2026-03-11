@@ -133,15 +133,15 @@ def should_push(stack: List[FVG], new_dir: str, gap_low: float, gap_high: float)
 
 def backtest(
     df: pd.DataFrame,
-    start_equity: float = 1000.0,
-    risk_pct: float = 0.01,
-    tp_r: float = 2.0,
-    min_gap: float = 0.0,
+    start_equity: float = 998.0,
+    risk_pct: float = 0.5,
+    tp_r: float = 7,
+    min_gap: float = 0.02,
     trade_on_first: bool = False,
     slippage: float = 0.01,
     monthly_deposit: float = 1000.0,
-    alpha: float = 2.0,
-    r_max: float = 2.0,
+    alpha: float = 7,
+    r_max: float = 7,
 ) -> Tuple[float, List[Trade]]:
     equity = start_equity
 
@@ -150,7 +150,7 @@ def backtest(
         if r <= 0:
             return 0.0
         r = min(r, r_max)
-        return log(1.0 + alpha * r) / log(1.0 + alpha * r_max)
+        return log(1.5 + alpha * r) / log(1.5 + alpha * r_max)
 
     trades: List[Trade] = []
 
@@ -171,14 +171,16 @@ def backtest(
     risk_per_share = 0.0
     last_deposit_yyyymm: Optional[str] = None
     # FVG stack per day (reset daily)
+    deposit = 1
     for day, day_df in df.groupby("day", sort=True):
         day_df = day_df.reset_index(drop=True)
         yyyymm = day[:7]  # "YYYY-MM"
-        i = 1
+        
         if last_deposit_yyyymm != yyyymm:
-            print(f"Added deposit for the {i}. time")
+            print(f"Added deposit for the {deposit}. time")
             equity += monthly_deposit
             last_deposit_yyyymm = yyyymm
+            deposit += 1
         if len(day_df) < 10:
             continue
 
@@ -302,7 +304,7 @@ def backtest(
                     pnl_per_share = (exit_price - entry) if pos_dir == "long" else (entry - exit_price)
                     pnl = pnl_per_share * remaining_shares
                     equity += pnl
-
+                    pnl = realized_pnl_current_trade
                     trades.append(Trade(
                         entry_ts=entry_ts,  # type: ignore[arg-type]
                         exit_ts=ts,

@@ -31,7 +31,7 @@ SYMBOL = "SPY"
 
 #TODO find the best config somehow
 cfg = ExecCfg(
-    risk_pct=0.0025,            # 0.25% per trade (live-safe with high frequency)
+    risk_pct=0.01,            # 1% per trade (live-safe with high frequency)
     max_pos_value_mult=1.0,     # don’t exceed 1x equity notional on longs
     alpha=2.0,
     r_max=2.0,
@@ -91,22 +91,25 @@ def on_new_candle(candle, should_print = False):
 #TODO implement Take profit and stop loss every 15s within the minute based on quotes
 # maybe make it part of wait till next minute 
 
+#TODO accumulation, manipulate, IFVG, Distribution
+
 def main():
     needs_historical = False
-    if timemgr.current_dt < timemgr.today_930 or timemgr.current_dt > timemgr.today_1630:
+    if timemgr.current_dt < timemgr.today_931 or timemgr.current_dt > timemgr.today_1630:
         _logger.log("Trading hasnt begun yet today, waiting until")
-        if timemgr.current_dt < timemgr.today_930:
-            _logger.log("Today 09:30 EST")
-            timemgr.wait_until(timemgr.today_930)
+        if timemgr.current_dt < timemgr.today_931:
+            _logger.log("Today 09:31 EST")
+            timemgr.wait_until(timemgr.today_931)
         elif timemgr.current_dt > timemgr.today_1630:
-            _logger.log("Tomorrow 09:30 EST")
-            timemgr.wait_until(timemgr.next_day_930)
+            _logger.log("Tomorrow 09:31 EST")
+            timemgr.wait_until(timemgr.next_day_931)
     else:
         _logger.log("trading has begun")
-        needs_historical = True
+        #needs_historical = True
     trading = True 
     in_position = False
     need_to_enter = False
+    
     if needs_historical:
         _logger.log("Getting historical data for today")
         start = timemgr.today_930
@@ -195,8 +198,10 @@ def main():
                     if current_fvg.dir == "bear" and not SHORT_ENABLED:
                         _logger.log("Shorting not enabled")
                     else:
-                        need_to_enter = True #Entering on the next bar
-                        _logger.log("Entering on next bar")
+                        with pos_state.locked() as pos:
+                            if pos is None or pos.remaining_qty == 0:
+                                need_to_enter = True #Entering on the next bar
+                                _logger.log("Entering on next bar")
                 else:
                     _logger.log(f"FVG irrelevant (smaller than the previous)")
             else:

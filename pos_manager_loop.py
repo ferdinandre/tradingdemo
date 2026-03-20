@@ -14,7 +14,7 @@ def position_manager_loop(
     market_data: AlpacaMarketData,
     paper_trading: AlpacaPaperTrading,
     cfg,
-    poll_seconds: float = 30.0,
+    poll_seconds: float = 5.0,
     timemgr: TimeMgr = None
 ) -> None:
     """

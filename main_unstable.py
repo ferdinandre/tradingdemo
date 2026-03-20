@@ -131,46 +131,52 @@ def main():
             market_data=market_data,
             paper_trading=paper_trading,
             cfg=cfg,
-            poll_seconds=30.0,
+            poll_seconds=5.0,
             timemgr=timemgr
         ),
         daemon=True,
     )
     position_mgr_thread.start()
+    trades_made_today = 0
     while trading:
+
         if need_to_enter:
-            _logger.log(f"Attempting to enter pos at: {datetime.datetime.now()}")
-            side = "long" if candle1.high > candle1 .low else "short"
-            enter_price = executor.get_entry_price(md = market_data, symbol= SYMBOL,side=side)
-            current_equity = float(paper_trading.get_account()["equity"])
-            qty = sizing.compute_live_qty(
-                paper_trading=paper_trading,
-                cfg=cfg,
-                entry=enter_price,
-                stop = candle1.low if candle1.low < candle1.high else candle1.high,
-                side=fvg_stack[-1].dir,
-                _logger = _logger,
-                
-            )
-            _logger.log(f"Computed quantity: {qty}")
-            pos = executor.enter_position(
-                paper=paper_trading,
-                symbol=SYMBOL,
-                fvg_dir=fvg_stack[-1].dir,
-                entry_price=enter_price,
-                signal_low=float(candle1.low),
-                signal_high=float(candle1.high),
-                tp_r=TP_R,
-                equity=current_equity,
-                cfg=cfg,
-                extended_hours=False,
-                qty=qty,
-            )
-            need_to_enter = False
-            in_position = pos is not None
-            if in_position:
-                _logger.log(f"Entered position with quantity {qty}, side: {side}, average fill price: {pos.average_fill_price}")
-                pos_state.set(pos)
+            if trades_made_today < 4:
+            
+                _logger.log(f"Attempting to enter pos at: {datetime.datetime.now()}")
+                side = "long" if candle1.high > candle1 .low else "short"
+                enter_price = executor.get_entry_price(md = market_data, symbol= SYMBOL,side=side)
+                current_equity = float(paper_trading.get_account()["equity"])
+                qty = sizing.compute_live_qty(
+                    paper_trading=paper_trading,
+                    cfg=cfg,
+                    entry=enter_price,
+                    stop = candle1.low if candle1.low < candle1.high else candle1.high,
+                    side=fvg_stack[-1].dir,
+                    _logger = _logger,
+                    
+                )
+                _logger.log(f"Computed quantity: {qty}")
+                pos = executor.enter_position(
+                    paper=paper_trading,
+                    symbol=SYMBOL,
+                    fvg_dir=fvg_stack[-1].dir,
+                    entry_price=enter_price,
+                    signal_low=float(candle1.low),
+                    signal_high=float(candle1.high),
+                    tp_r=TP_R,
+                    equity=current_equity,
+                    cfg=cfg,
+                    extended_hours=False,
+                    qty=qty,
+                )
+                need_to_enter = False
+                in_position = pos is not None
+                if in_position:
+                    _logger.log(f"Entered position with quantity {qty}, side: {side}, average fill price: {pos.average_fill_price}")
+                    pos_state.set(pos)
+            else:
+                print("Already over the 4 daytrade limit for today. Not entering anymore trades")
         c = market_data.get_latest_1min_candle(SYMBOL)
         fvg.stack_pop_invalidated(fvg_stack, c.low, c.high)
         account = paper_trading.get_account()

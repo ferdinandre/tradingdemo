@@ -12,17 +12,18 @@ import live_exec
 import tomllib
 import datetime
 import pos_manager_loop
+import os
 
-with open("creds.toml", "rb") as f:
-    toml = tomllib.load(f)
+#with open("creds.toml", "rb") as f:
+#    toml = tomllib.load(f)
 
 _logger = mylogger.Logger()
 
-API_KEY = toml["key_id"]
+API_KEY = os.environ["ALPACA_API_KEY"] #toml["key_id"]
 
-API_SECRET = toml["secret_key"]
+API_SECRET = os.environ["ALPACA_SECRET_KEY"] #toml["secret_key"]
 
-SHORT_ENABLED = bool(toml["short_enabled"])
+SHORT_ENABLED = os.environ.get("SHORT_ENABLED", "false").lower() in ("1", "true", "yes", "on", "enabled") #bool(toml["short_enabled"])
 
 _logger.log(SHORT_ENABLED)
 

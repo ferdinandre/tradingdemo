@@ -141,6 +141,7 @@ def main():
     )
     position_mgr_thread.start()
     trades_made_today = 0
+    current_equity = float(paper_trading.get_account()["buying_power"])
     while trading:
 
         if need_to_enter:
@@ -149,7 +150,7 @@ def main():
                 _logger.log(f"Attempting to enter pos at: {datetime.datetime.now()}")
                 side = "long" if candle1.high > candle1 .low else "short"
                 enter_price = executor.get_entry_price(md = market_data, symbol= SYMBOL,side=side)
-                current_equity = float(paper_trading.get_account()["equity"])
+                current_equity = float(paper_trading.get_account()["buying_power"])
                 qty = sizing.compute_live_qty(
                     paper_trading=paper_trading,
                     cfg=cfg,

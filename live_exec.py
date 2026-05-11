@@ -210,6 +210,7 @@ class LiveExecutor:
             tp = entry_price - tp_r * risk_ps
         self._logger.log(f"Entering position {side}, with quantity {qty}")
         if qty <= 0:
+            self._logger.log("Invalid quantity. Not entering position.")
             return None
 
         # Place entry MARKET

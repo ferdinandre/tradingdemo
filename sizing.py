@@ -53,16 +53,15 @@ def compute_qty(
         return 0.0
 
     # 1) risk-based qty
-    risk_dollars = equity * risk_pct
+    risk_dollars = buying_power * risk_pct
     qty = risk_dollars / risk_per_share
 
     # 2) notional cap (your existing rule)
-    max_notional = equity * max_pos_value_mult
+    max_notional = buying_power * max_pos_value_mult
     qty = min(qty, max_notional / entry)
 
     # 3) hard cap by available buying power (MOST IMPORTANT here)
-    if buying_power is not None:
-        qty = min(qty, (buying_power * bp_buffer) / entry)
+    qty = min(qty, (buying_power * bp_buffer) / entry)
 
     # whole shares
     _logger.log(f"Sizing: Computed raw qty: {qty}, rounding down to whole shares")

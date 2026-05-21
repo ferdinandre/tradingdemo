@@ -27,6 +27,10 @@ class TimeMgr:
                 hour=9, minute=35, second=0, microsecond=0
         )
 
+        self.today_1555 = self.current_dt.replace(
+            hour=15, minute=55, second=0, microsecond=0
+        )
+
         self.today_1630 = self.current_dt.replace(
             hour=16, minute=30, second=0, microsecond=0
         )
@@ -56,6 +60,6 @@ class TimeMgr:
 
     def market_still_open(self):
         now = datetime.now(self.eastern)
-        return (self.today_1625 - now).total_seconds() > 60
+        return (self.today_1555 - now).total_seconds() > 60
 
 

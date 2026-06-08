@@ -18,7 +18,7 @@ def compute_live_qty(
     bp = float(acct["buying_power"])
 
     # Avoid using margin/leverage. This should stay around your real account size.
-    effective_capital = min(cash, equity, bp)
+    effective_capital = min(cash, equity, bp) * 0.95
 
     rps = (entry - stop) if side == "long" else (stop - entry)
     if rps <= 0:

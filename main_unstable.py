@@ -158,7 +158,7 @@ def main():
                     paper_trading=paper_trading,
                     cfg=cfg,
                     entry=enter_price,
-                    stop = candle1.low if candle1.low < candle1.high else candle1.high,
+                    stop = candle1.low if fvg_dir == "bull" else candle1.high,
                     side=fvg_stack[-1].dir,
                     _logger = _logger,
                     

@@ -173,7 +173,7 @@ def main():
                     cfg=cfg,
                     entry=enter_price,
                     stop = candle1.low if fvg_dir == "bull" else candle1.high,
-                    side=fvg_stack[-1].dir,
+                    side="long" if fvg_stack[-1].dir == "bull" else "short",
                     _logger = _logger,
                     
                 )

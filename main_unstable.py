@@ -218,6 +218,7 @@ def main():
         trading = timemgr.market_still_open()
         if not trading:
             position_mgr_stop.set() # signal the position manager thread to stop
+            _logger.log("Market closed, shutting down trading bot")
             break
             
             

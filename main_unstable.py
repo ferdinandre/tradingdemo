@@ -151,6 +151,7 @@ def main():
                 _logger.log(f"Attempting to enter pos at: {datetime.datetime.now()}")
                 fvg_dir = fvg_stack[-1].dir
                 side = "long" if fvg_dir == "bull" else "short"
+                _logger.log(f"FVG direction: {fvg_dir}, side: {side}")
                 enter_price = executor.get_entry_price(md = market_data, symbol= SYMBOL,side=side)
                 current_equity = float(paper_trading.get_account()["buying_power"])
                 qty = sizing.compute_live_qty(

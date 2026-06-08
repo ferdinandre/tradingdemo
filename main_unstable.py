@@ -13,6 +13,18 @@ import tomllib
 import datetime
 import pos_manager_loop
 import os
+import signal
+
+shutdown_requested = False
+
+def handle_shutdown(signum, frame):
+    global shutdown_requested
+    _logger.log("SIGTERM received, requesting position manager shutdown")
+    shutdown_requested = True
+    position_mgr_stop.set()
+
+signal.signal(signal.SIGTERM, handle_shutdown)
+signal.signal(signal.SIGINT, handle_shutdown)
 
 #with open("creds.toml", "rb") as f:
 #    toml = tomllib.load(f)
@@ -51,12 +63,10 @@ executor = live_exec.LiveExecutor(paper_trading=paper_trading, timemgr=timemgr, 
 
 fvg_stack: List[FVG] = []
 
-pos: PositionState | None = None 
-
 candle0: Candle | None = None #third youngest candle
 candle1: Candle | None = None #second youngest candle
 
-pos_state = SharedPosState(initial=pos) # shared variable for position state between main loop and position manager loop
+pos_state = SharedPosState() # shared variable for position state between main loop and position manager loop
 position_mgr_stop = threading.Event()
 
 def print_ohlc(candle: Candle) -> None:
@@ -108,7 +118,6 @@ def main():
         _logger.log("trading has begun")
         #needs_historical = True
     trading = True 
-    in_position = False
     need_to_enter = False
     
     if needs_historical:
@@ -136,14 +145,19 @@ def main():
             paper_trading=paper_trading,
             cfg=cfg,
             poll_seconds=5.0,
-            timemgr=timemgr
+            timemgr=timemgr,
+            logger =_logger
         ),
-        daemon=True,
+        daemon=False,
     )
     position_mgr_thread.start()
     trades_made_today = 0
-    current_equity = float(paper_trading.get_account()["buying_power"])
     while trading:
+        if shutdown_requested:
+            break
+        with pos_state.locked() as current_pos:
+            if current_pos is not None and current_pos.remaining_qty > 0:
+                need_to_enter = False  # position still open, don't stack entries
 
         if need_to_enter:
             if trades_made_today < 4:
@@ -164,7 +178,7 @@ def main():
                     
                 )
                 _logger.log(f"Computed quantity: {qty}")
-                pos = executor.enter_position(
+                new_pos = executor.enter_position(
                     paper=paper_trading,
                     symbol=SYMBOL,
                     fvg_dir=fvg_stack[-1].dir,
@@ -178,11 +192,14 @@ def main():
                     qty=qty,
                 )
                 need_to_enter = False
-                in_position = pos is not None
-                if in_position:
-                    _logger.log(f"Entered position with quantity {qty}, side: {side}, average fill price: {pos.average_fill_price}")
-                    pos_state.set(pos)
+                if new_pos is not None:
+                    trades_made_today += 1
+                    _logger.log(f"Entered position with quantity {qty}, side: {side}, average fill price: {new_pos.average_fill_price}")
+                    pos_state.set(new_pos)
+                else:
+                    _logger.log("Entry failed, new_pos is None")
             else:
+                need_to_enter = False
                 print("Already over the 4 daytrade limit for today. Not entering anymore trades")
         c = market_data.get_latest_1min_candle(SYMBOL)
         fvg.stack_pop_invalidated(fvg_stack, c.low, c.high)
@@ -203,7 +220,7 @@ def main():
                         _logger.log("Shorting not enabled")
                     else:
                         with pos_state.locked() as pos:
-                            if pos is None or pos.remaining_qty == 0:
+                            if (pos is None or pos.remaining_qty == 0) and not shutdown_requested:
                                 need_to_enter = True #Entering on the next bar
                                 _logger.log("Entering on next bar")
                 else:
@@ -214,10 +231,12 @@ def main():
             _logger.log("Warming up 3-bar window...")
 
         on_new_candle(c, True)
-        timemgr.wait_until_next_minute()
-        trading = timemgr.market_still_open()
+
+        timemgr.wait_until_next_minute(stop_event=position_mgr_stop)
+        trading = timemgr.market_still_open() and not shutdown_requested
         if not trading:
             position_mgr_stop.set() # signal the position manager thread to stop
+            position_mgr_thread.join(timeout = 30) # wait for the position manager thread to finish
             _logger.log("Market closed, shutting down trading bot")
             break
             

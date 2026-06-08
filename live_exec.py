@@ -375,7 +375,7 @@ class LiveExecutor:
         *,
         paper,
         pos: PositionState,
-        px: float,
+        px: Optional[float],
         extended_hours: bool = False,
         timemgr: TimeMgr,
     ) -> Optional[str]:
@@ -385,7 +385,7 @@ class LiveExecutor:
         if pos.remaining_qty <= 0:
             return "flat"
 
-        px = float(px)
+        
 
         # EXIT side is opposite of current position
         exit_side = "short" if pos.side == "long" else "long"
@@ -414,15 +414,16 @@ class LiveExecutor:
             pos.remaining_qty = 0.0
             self._logger.log(f"Hard-exit {reason}: FLAT @ {fill.avg_fill_price}")
             return reason
-
+        if px is not None:
+            px = float(px)
         # stop-first (conservative)
-        stop_hit = (px <= pos.stop) if pos.side == "long" else (px >= pos.stop)
-        if stop_hit:
-            return _exit_all("stop")
+            stop_hit = (px <= pos.stop) if pos.side == "long" else (px >= pos.stop)
+            if stop_hit:
+                return _exit_all("stop")
 
-        tp_hit = (px >= pos.tp) if pos.side == "long" else (px <= pos.tp)
-        if tp_hit:
-            return _exit_all("tp")
+            tp_hit = (px >= pos.tp) if pos.side == "long" else (px <= pos.tp)
+            if tp_hit:
+                return _exit_all("tp")
 
         # end of day
         if not timemgr.market_still_open():

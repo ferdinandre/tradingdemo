@@ -5,6 +5,7 @@ import threading
 from live_exec import LiveExecutor
 from time_mgmt import TimeMgr
 from dataapi import AlpacaMarketData, AlpacaPaperTrading
+from mylogger import Logger
 
 def position_manager_loop(
     *,
@@ -15,7 +16,8 @@ def position_manager_loop(
     paper_trading: AlpacaPaperTrading,
     cfg,
     poll_seconds: float = 5.0,
-    timemgr: TimeMgr = None
+    timemgr: TimeMgr,
+    logger: Logger
 ) -> None:
     """
     Runs until stop_event is set.
@@ -29,8 +31,7 @@ def position_manager_loop(
     while not stop_event.is_set():
         
         try:
-            should_clear = False
-            print(f"position_manager_loop tick at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"THREAD: position_manager_loop tick at {time.strftime('%Y-%m-%d %H:%M:%S')}")
             # 1) read symbol under lock
             with shared_pos.locked() as pos:
                 symbol = None if pos is None else pos.symbol
@@ -42,53 +43,80 @@ def position_manager_loop(
                 bid = float(q["bp"])
                 ask = float(q["ap"])
 
-                with shared_pos.locked() as pos:
-                    if pos is not None:
-                        # Use executable-side price for exit logic
-                        px = bid if pos.side == "long" else ask
 
-                        # 1) stop loss first
-                        did_stop = live_executor.cut_loss(
+                pos = shared_pos.get_copy() # get a copy of the current position state for decision making outside the lock
+                if pos is not None:
+                    # Use executable-side price for exit logic
+                    px = bid if pos.side == "long" else ask
+
+                    # 1) stop loss first
+                    did_stop = live_executor.cut_loss(
+                        paper=paper_trading,
+                        pos=pos,
+                        px=px,
+                        cfg=cfg,
+                        extended_hours=False,
+                    )
+                    position_closed_by_stop = pos.remaining_qty <= 0
+                    print(f"THREAD: cut_loss check: did_stop={did_stop}, pos.remaining_qty={pos.remaining_qty}")
+
+                    # 2) take profit second
+                    if not position_closed_by_stop:
+                        did_tp = live_executor.take_profit(
                             paper=paper_trading,
                             pos=pos,
                             px=px,
                             cfg=cfg,
-                            extended_hours=False,
                         )
-                        print(f"cut_loss check: did_stop={did_stop}, pos.remaining_qty={pos.remaining_qty}")
+                        position_closed_by_tp = pos.remaining_qty <= 0
+                        print(f"THREAD: take_profit check: did_tp={did_tp}, pos.remaining_qty={pos.remaining_qty}")
+                    else:
+                        position_closed_by_tp = False
 
-                        # 2) take profit second
-                        if not did_stop and pos.remaining_qty > 0:
-                            did_tp = live_executor.take_profit(
-                                paper=paper_trading,
-                                pos=pos,
-                                px=px,
-                                cfg=cfg,
-                            )
-                        else:
-                            did_tp = False
-                        print(f"take_profit check: did_tp={did_tp}, pos.remaining_qty={pos.remaining_qty}")
+                    
 
-                        # 3) hard exit last
-                        if not did_stop and not did_tp and pos.remaining_qty > 0:
-                            reason = live_executor.hard_exit(
-                                paper=paper_trading,
-                                pos=pos,
-                                px=px,
-                                extended_hours=False,
-                                timemgr=timemgr,
-                            )
-                        else:
-                            reason = None
-                        print(f"hard_exit check: reason={reason}, pos.remaining_qty={pos.remaining_qty}")
-                        if pos.remaining_qty <= 0:
-                            should_clear = True
+                    # 3) hard exit last
+                    if not position_closed_by_stop and not position_closed_by_tp:
+                        reason = live_executor.hard_exit(
+                            paper=paper_trading,
+                            pos=pos,
+                            px=px,
+                            extended_hours=False,
+                            timemgr=timemgr,
+                        )
+                        print(f"THREAD: hard_exit check: reason={reason}, pos.remaining_qty={pos.remaining_qty}")
+                    else:
+                        reason = None
 
-            if should_clear:
-                print("Position fully closed, clearing shared state.")
-                shared_pos.set(None)
+                    if pos.remaining_qty <= 0:
+                        print("THREAD: Position fully closed, clearing shared state.")
+                        shared_pos.clear()
+                    else:
+                        shared_pos.set(pos)
 
         except Exception as e:
-            print(f"position_manager_loop error: {e}")
+            print(f"THREAD: position_manager_loop error: {e}")
 
         stop_event.wait(poll_seconds)
+    
+    pos = shared_pos.get_copy()
+
+    if pos is not None:
+        try:
+            live_executor.hard_exit(
+                paper=paper_trading,
+                pos=pos,
+                px=None,
+                extended_hours=False,
+                timemgr=timemgr,
+            )
+            if pos.remaining_qty <= 0:
+                shared_pos.clear()
+                logger.log("THREAD: Shutdown flatten complete, shared position cleared")
+            else: 
+                shared_pos.set(pos)
+                logger.log(f"THREAD: Shutdown hard_exit sent but qty still remains: {pos.remaining_qty}")
+
+
+        except Exception as e:
+            logger.log(f"THREAD: Shutdown hard_exit failed: {e}")

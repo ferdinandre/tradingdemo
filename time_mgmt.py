@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import time
+import threading
 
 class TimeMgr:
     def __init__(self):
@@ -41,13 +42,12 @@ class TimeMgr:
 
 
 
-    def wait_until_next_minute(self):
+    def wait_until_next_minute(self, stop_event: threading.Event) -> None:
         now = datetime.now(self.eastern)
         next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
         print(f"Waiting until next minute: {next_minute.time()} (current time: {now.time()})")
-        delay = (next_minute - now).total_seconds()
-        if delay > 0:
-            time.sleep(delay)  # add small buffer to ensure we are in the next minute
+        delta = (next_minute - now).total_seconds()
+        stop_event.wait(timeout=delta)
 
 
     def wait_until(self, target_datetime):

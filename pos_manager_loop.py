@@ -31,7 +31,7 @@ def position_manager_loop(
     while not stop_event.is_set():
         
         try:
-            print(f"THREAD: position_manager_loop tick at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.log(f"THREAD: position_manager_loop tick at {time.strftime('%Y-%m-%d %H:%M:%S')}")
             # 1) read symbol under lock
             with shared_pos.locked() as pos:
                 symbol = None if pos is None else pos.symbol
@@ -58,7 +58,7 @@ def position_manager_loop(
                         extended_hours=False,
                     )
                     position_closed_by_stop = pos.remaining_qty <= 0
-                    print(f"THREAD: cut_loss check: did_stop={did_stop}, pos.remaining_qty={pos.remaining_qty}")
+                    logger.log(f"THREAD: cut_loss check: did_stop={did_stop}, pos.remaining_qty={pos.remaining_qty}")
 
                     # 2) take profit second
                     if not position_closed_by_stop:
@@ -69,7 +69,7 @@ def position_manager_loop(
                             cfg=cfg,
                         )
                         position_closed_by_tp = pos.remaining_qty <= 0
-                        print(f"THREAD: take_profit check: did_tp={did_tp}, pos.remaining_qty={pos.remaining_qty}")
+                        logger.log(f"THREAD: take_profit check: did_tp={did_tp}, pos.remaining_qty={pos.remaining_qty}")
                     else:
                         position_closed_by_tp = False
 
@@ -84,18 +84,18 @@ def position_manager_loop(
                             extended_hours=False,
                             timemgr=timemgr,
                         )
-                        print(f"THREAD: hard_exit check: reason={reason}, pos.remaining_qty={pos.remaining_qty}")
+                        logger.log(f"THREAD: hard_exit check: reason={reason}, pos.remaining_qty={pos.remaining_qty}")
                     else:
                         reason = None
 
                     if pos.remaining_qty <= 0:
-                        print("THREAD: Position fully closed, clearing shared state.")
+                        logger.log("THREAD: Position fully closed, clearing shared state.")
                         shared_pos.clear()
                     else:
                         shared_pos.set(pos)
 
         except Exception as e:
-            print(f"THREAD: position_manager_loop error: {e}")
+            logger.log(f"THREAD: position_manager_loop error: {e}")
 
         stop_event.wait(poll_seconds)
     

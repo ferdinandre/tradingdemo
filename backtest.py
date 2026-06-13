@@ -206,11 +206,12 @@ def run_backtest(
             cur = _make_candle(row)
             detected = detect_fvg(candle0, candle1, cur)
             if detected is not None:
+                was_empty = len(fvg_stack) == 0
                 if should_push(fvg_stack, detected.dir, gap_low=detected.gap_low, gap_high=detected.gap_high):
                     fvg_stack.append(detected)
-                    if not (detected.dir == "bear" and not short_enabled):
+                    if not was_empty and not (detected.dir == "bear" and not short_enabled):
                         need_to_enter = True
-                        signal_candle = candle1
+                        signal_candle = cur   # stop at b2's extreme (the candle that made the gap)
                         fvg_dir_pending = detected.dir
 
         # Advance the 3-bar window

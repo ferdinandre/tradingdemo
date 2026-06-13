@@ -31,11 +31,13 @@ def should_push(stack: List[FVG], new_dir: str, gap_low: float, gap_high: float)
     top = stack[-1]
 
     if new_dir != top.dir:
-        # opposite direction while structure still active -> ignore (wait for pops)
         return False
 
-    # same direction continuation condition
-    return abs(gap_high - gap_low) > 0.02
+    # continuation: must be a strictly better gap than the top
+    if new_dir == "bull":
+        return gap_low > top.gap_low
+    else:
+        return gap_high < top.gap_high
 
 def stack_pop_invalidated(stack: List[FVG], bar_low: float, bar_high: float) -> None:
     # Pop while the top is invalidated (filled)

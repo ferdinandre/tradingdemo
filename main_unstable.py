@@ -63,8 +63,9 @@ executor = live_exec.LiveExecutor(paper_trading=paper_trading, timemgr=timemgr, 
 
 fvg_stack: List[FVG] = []
 
-candle0: Candle | None = None #third youngest candle
-candle1: Candle | None = None #second youngest candle
+candle0: Candle | None = None  # third youngest candle (b0)
+candle1: Candle | None = None  # second youngest candle (b1)
+signal_b2: Candle | None = None  # the candle that created the FVG (b2); stop is placed at its extreme
 
 pos_state = SharedPosState() # shared variable for position state between main loop and position manager loop
 position_mgr_stop = threading.Event()
@@ -172,10 +173,9 @@ def main():
                     paper_trading=paper_trading,
                     cfg=cfg,
                     entry=enter_price,
-                    stop = candle1.low if fvg_dir == "bull" else candle1.high,
+                    stop=signal_b2.low if fvg_dir == "bull" else signal_b2.high,
                     side="long" if fvg_stack[-1].dir == "bull" else "short",
-                    _logger = _logger,
-                    
+                    _logger=_logger,
                 )
                 _logger.log(f"Computed quantity: {qty}")
                 new_pos = executor.enter_position(
@@ -183,8 +183,8 @@ def main():
                     symbol=SYMBOL,
                     fvg_dir=fvg_stack[-1].dir,
                     entry_price=enter_price,
-                    signal_low=float(candle1.low),
-                    signal_high=float(candle1.high),
+                    signal_low=float(signal_b2.low),
+                    signal_high=float(signal_b2.high),
                     tp_r=TP_R,
                     equity=current_equity,
                     cfg=cfg,
@@ -213,18 +213,22 @@ def main():
             current_fvg = fvg.detect_fvg(candle0, candle1, c)
             if current_fvg is not None:
                 _logger.log(f"Detected FVG at {datetime.datetime.now()}")
+                was_empty = len(fvg_stack) == 0
                 if fvg.should_push(fvg_stack, current_fvg.dir, gap_low=current_fvg.gap_low, gap_high=current_fvg.gap_high):
                     fvg_stack.append(current_fvg)
                     _logger.log("FVG pushed to stack")
-                    if current_fvg.dir == "bear" and not SHORT_ENABLED:
+                    if was_empty:
+                        _logger.log("First FVG anchors structure, no trade yet")
+                    elif current_fvg.dir == "bear" and not SHORT_ENABLED:
                         _logger.log("Shorting not enabled")
                     else:
                         with pos_state.locked() as pos:
                             if (pos is None or pos.remaining_qty == 0) and not shutdown_requested:
-                                need_to_enter = True #Entering on the next bar
+                                signal_b2 = c  # stop placed at b2's extreme
+                                need_to_enter = True
                                 _logger.log("Entering on next bar")
                 else:
-                    _logger.log(f"FVG irrelevant (smaller than the previous)")
+                    _logger.log(f"FVG irrelevant (not a better continuation)")
             else:
                 _logger.log(f"No FVG detected at {datetime.datetime.now()}")
         else:

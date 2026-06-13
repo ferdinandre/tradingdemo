@@ -100,10 +100,6 @@ def run_backtest(
     candle0: Optional[Candle] = None
     candle1: Optional[Candle] = None
 
-    need_to_enter = False
-    signal_candle: Optional[Candle] = None  # candle1 at the time FVG was detected
-    fvg_dir_pending: Optional[str] = None
-
     pos_side: Optional[str] = None
     pos_entry = pos_stop = pos_tp = pos_qty = 0.0
     pos_entry_ts: Optional[pd.Timestamp] = None
@@ -122,49 +118,16 @@ def run_backtest(
             candle0 = None
             candle1 = None
             fvg_stack.clear()
-            need_to_enter = False
             pos_side = None  # EOD close should have handled this; safety reset
 
         if t < SESSION_START or t >= EOD_CLOSE_TIME:
             continue
 
-        bar_open  = float(row["open"])
         bar_high  = float(row["high"])
         bar_low   = float(row["low"])
         bar_close = float(row["close"])
 
         stack_pop_invalidated(fvg_stack, bar_low, bar_high)
-
-        # --- Enter on this bar's open (FVG signal came from previous bar) ---
-        if need_to_enter and pos_side is None and trades_today < MAX_TRADES_PER_DAY:
-            need_to_enter = False
-            entry_px = bar_open
-
-            if fvg_dir_pending == "bull":
-                stop = float(signal_candle.low)
-                risk_ps = entry_px - stop
-                if risk_ps > 0:
-                    tp = entry_px + tp_r * risk_ps
-                    qty = float(int((equity * cfg.risk_pct) / risk_ps))
-                    qty = min(qty, float(int((equity * cfg.max_pos_value_mult) / entry_px)))
-                    if qty > 0:
-                        pos_side = "long"
-                        pos_entry, pos_stop, pos_tp, pos_qty = entry_px, stop, tp, qty
-                        pos_entry_ts = ts
-
-            elif fvg_dir_pending == "bear" and short_enabled:
-                stop = float(signal_candle.high)
-                risk_ps = stop - entry_px
-                if risk_ps > 0:
-                    tp = entry_px - tp_r * risk_ps
-                    qty = float(int((equity * cfg.risk_pct) / risk_ps))
-                    qty = min(qty, float(int((equity * cfg.max_pos_value_mult) / entry_px)))
-                    if qty > 0:
-                        pos_side = "short"
-                        pos_entry, pos_stop, pos_tp, pos_qty = entry_px, stop, tp, qty
-                        pos_entry_ts = ts
-        elif need_to_enter:
-            need_to_enter = False  # trades_today limit hit or already in position
 
         # --- Manage open position ---
         if pos_side is not None:
@@ -201,18 +164,38 @@ def run_backtest(
                 trades_today += 1
                 pos_side = None
 
-        # --- FVG detection when flat ---
-        if pos_side is None and not need_to_enter and candle0 is not None and candle1 is not None:
+        # --- FVG detection + immediate entry when flat ---
+        if pos_side is None and candle0 is not None and candle1 is not None:
             cur = _make_candle(row)
             detected = detect_fvg(candle0, candle1, cur)
             if detected is not None:
                 was_empty = len(fvg_stack) == 0
                 if should_push(fvg_stack, detected.dir, gap_low=detected.gap_low, gap_high=detected.gap_high):
                     fvg_stack.append(detected)
-                    if not was_empty and not (detected.dir == "bear" and not short_enabled):
-                        need_to_enter = True
-                        signal_candle = cur   # stop at b2's extreme (the candle that made the gap)
-                        fvg_dir_pending = detected.dir
+                    if not was_empty and trades_today < MAX_TRADES_PER_DAY and not (detected.dir == "bear" and not short_enabled):
+                        entry_px = bar_close
+                        if detected.dir == "bull":
+                            stop = bar_low
+                            risk_ps = entry_px - stop
+                            if risk_ps > 0:
+                                tp = entry_px + tp_r * risk_ps
+                                qty = float(int((equity * cfg.risk_pct) / risk_ps))
+                                qty = min(qty, float(int((equity * cfg.max_pos_value_mult) / entry_px)))
+                                if qty > 0:
+                                    pos_side = "long"
+                                    pos_entry, pos_stop, pos_tp, pos_qty = entry_px, stop, tp, qty
+                                    pos_entry_ts = ts
+                        else:
+                            stop = bar_high
+                            risk_ps = stop - entry_px
+                            if risk_ps > 0:
+                                tp = entry_px - tp_r * risk_ps
+                                qty = float(int((equity * cfg.risk_pct) / risk_ps))
+                                qty = min(qty, float(int((equity * cfg.max_pos_value_mult) / entry_px)))
+                                if qty > 0:
+                                    pos_side = "short"
+                                    pos_entry, pos_stop, pos_tp, pos_qty = entry_px, stop, tp, qty
+                                    pos_entry_ts = ts
 
         # Advance the 3-bar window
         candle0 = candle1

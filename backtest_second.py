@@ -45,7 +45,7 @@ import pandas as pd
 EASTERN         = ZoneInfo("America/New_York")
 SESSION_START   = dtime(9, 31)
 EOD_CLOSE_TIME  = dtime(15, 55)
-MAX_TRADES_PER_DAY = 4
+MAX_TRADES_PER_DAY = 90
 
 
 class State(Enum):
@@ -291,7 +291,9 @@ def run_backtest(
                 # SHORT: up extension, price touched 50% and now closes BELOW it (rejection)
                 if setup.direction == "up" and bar_close < setup.retrace_50:
                     entry_px = bar_close
-                    sl       = setup.ext_end    # the peak
+                    # Stop at zone_low: if price climbs back into the broken zone, thesis is wrong
+                    #sl       = setup.ext_end #the peak of the overextened zone
+                    sl       = setup.zone_low
                     tp       = setup.ext_start  # start of extension
                     risk_ps  = sl - entry_px
                     if risk_ps > 0 and tp < entry_px:
@@ -304,7 +306,9 @@ def run_backtest(
                 # LONG: down extension, price touched 50% and now closes ABOVE it (rejection)
                 elif setup.direction == "down" and bar_close > setup.retrace_50:
                     entry_px = bar_close
-                    sl       = setup.ext_end    # the trough
+                    # Stop at zone_high: if price falls back into the broken zone, thesis is wrong
+                    #sl = setup.ext_end #the trough of the overextened zone
+                    sl       = setup.zone_high
                     tp       = setup.ext_start  # start of extension
                     risk_ps  = entry_px - sl
                     if risk_ps > 0 and tp > entry_px:

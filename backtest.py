@@ -1,45 +1,17 @@
+#!/usr/bin/env python3
 """
-Backtest: FVG STACK push/pop strategy (no Alpaca calls) on 1-minute Parquet data.
+Backtest for the FVG strategy on 1-minute OHLC bars.
+Mirrors the live bot (main_unstable.py) exactly:
+  - Same fvg.py detection and stack logic
+  - Stop at signal candle's (candle1) low/high
+  - Enter at open of the bar after the FVG bar
+  - Hard stop / hard TP per bar (stop checked first if both triggered)
+  - EOD close at 15:55 ET
+  - Max 4 trades per day (PDT rule)
 
-You asked for:
-- Read 1 year of 1-min candles from parquet (no timestamp column is OK).
-- Maintain a STACK of active FVGs (push new ones, pop when invalidated).
-- Always compare new FVG to the one at the top of the stack.
-- Start with $1000, trade through the dataset, print ending balance.
-
-Key definitions used here:
-- 3-candle FVG:
-    Bullish FVG if b2.low  > b0.high   => gap = [b0.high, b2.low]
-    Bearish FVG if b2.high < b0.low    => gap = [b2.high, b0.low]
-
-Stack rules:
-- POP (invalidate) top while it's "filled":
-    - Bull gap invalid if bar.low <= gap_low
-    - Bear gap invalid if bar.high >= gap_high
-
-- PUSH:
-    - If stack empty: push first detected FVG (creates current "structure")
-    - If same direction as top:
-        - Bull continuation: new.gap_low > top.gap_low  => push
-        - Bear continuation: new.gap_high < top.gap_high => push
-    - If opposite direction while stack not empty: ignore (you only flip after invalidation pops stack)
-
-Trade rule (simple, aligned with stack):
-- When a continuation FVG is pushed (or first FVG if you set trade_on_first=True),
-  enter next bar OPEN in direction of that FVG.
-- Stop: signal bar extreme (b2.low for long, b2.high for short)
-- Take profit: fixed R multiple (default 2.0R)
-- Position sizing: risk a fixed % of equity per trade (default 1%).
-  shares = floor((equity * risk_pct) / risk_per_share), min 1 if affordable.
-- Conservative intrabar execution: if stop and tp both touched in same candle => STOP first.
-- Force exit at 15:59 ET close.
-
-Install:
-  pip install pandas pyarrow
-
-Run:
-  python backtest_fvg_stack.py --file data.parquet
-  python backtest_fvg_stack.py --file data.parquet --risk_pct 0.02 --tp_r 1.3
+Usage:
+    python backtest.py bars.parquet --equity 10000
+    python backtest.py bars.parquet --equity 10000 --risk-pct 0.01 --tp-r 2 --out trades.csv
 """
 
 from __future__ import annotations
@@ -47,437 +19,271 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import time as dtime
-from math import floor
-from typing import Optional, Literal, List, Tuple, Dict
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from math import log
 
-ET = ZoneInfo("America/New_York")
+from fvg import detect_fvg, should_push, stack_pop_invalidated
+from models import FVG, Candle, ExecCfg
 
-
-
-@dataclass
-class FVG:
-    dir: Literal["bull", "bear"]
-    gap_low: float
-    gap_high: float
-    created_ts: pd.Timestamp  # ET timestamp of signal bar (b2)
+EASTERN = ZoneInfo("America/New_York")
+SESSION_START  = dtime(9, 31)
+EOD_CLOSE_TIME = dtime(15, 55)
+MAX_TRADES_PER_DAY = 4
 
 
 @dataclass
 class Trade:
     entry_ts: pd.Timestamp
     exit_ts: pd.Timestamp
-    direction: Literal["long", "short"]
+    side: str           # "long" / "short"
     entry: float
     stop: float
     tp: float
-    shares: int
+    qty: float
     exit_price: float
-    exit_reason: str
+    exit_reason: str    # "stop" | "tp" | "eod"
     pnl: float
-    equity_after: float
 
 
-# ---------- parquet timestamp extraction ----------
+def load_bars(path: str) -> pd.DataFrame:
+    """
+    Load a parquet file of 1-min OHLC bars.
+    Accepts Alpaca short names (t/o/h/l/c/v) or full names
+    (timestamp/open/high/low/close/volume). Converts timestamps to ET.
+    """
+    df = pd.read_parquet(path)
+    df.columns = [c.lower() for c in df.columns]
 
-def in_rth(ts_et: pd.Timestamp) -> bool:
-    t = ts_et.time()
-    return dtime(9, 30) <= t <= dtime(15, 59)
+    rename = {
+        "t": "ts", "o": "open", "h": "high", "l": "low",
+        "c": "close", "v": "volume", "timestamp": "ts", "datetime": "ts",
+    }
+    df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
 
+    if "ts" not in df.columns:
+        df = df.reset_index()
+        df.columns = ["ts"] + list(df.columns[1:])
 
-# ---------- strategy ----------
+    df["ts"] = pd.to_datetime(df["ts"])
+    if df["ts"].dt.tz is None:
+        df["ts"] = df["ts"].dt.tz_localize("UTC")
+    df["ts"] = df["ts"].dt.tz_convert(EASTERN)
 
-def detect_fvg(b0: pd.Series, b1: pd.Series, b2: pd.Series) -> Optional[Dict]:
-    # bullish
-    if float(b2["low"]) > float(b0["high"]):
-        return {"dir": "bull", "gap_low": float(b0["high"]), "gap_high": float(b2["low"])}
-    # bearish
-    if float(b2["high"]) < float(b0["low"]):
-        return {"dir": "bear", "gap_low": float(b2["high"]), "gap_high": float(b0["low"])}
-    return None
-
-
-def stack_pop_invalidated(stack: List[FVG], bar_low: float, bar_high: float) -> None:
-    # Pop while the top is invalidated (filled)
-    while stack:
-        top = stack[-1]
-        if top.dir == "bull":
-            if bar_low <= top.gap_low:
-                stack.pop()
-                continue
-        else:  # bear
-            if bar_high >= top.gap_high:
-                stack.pop()
-                continue
-        break
+    return df.sort_values("ts").reset_index(drop=True)
 
 
-def should_push(stack: List[FVG], new_dir: str, gap_low: float, gap_high: float) -> bool:
-    if not stack:
-        return True
-
-    top = stack[-1]
-    if new_dir != top.dir:
-        # opposite direction while structure still active -> ignore (wait for pops)
-        return False
-
-    # same direction continuation condition
-    if new_dir == "bull":
-        return gap_low > top.gap_low
-    else:
-        return gap_high < top.gap_high
+def _make_candle(row: pd.Series) -> Candle:
+    return Candle(
+        symbol="BT",
+        ts=row["ts"],
+        open=float(row["open"]),
+        high=float(row["high"]),
+        low=float(row["low"]),
+        close=float(row["close"]),
+        volume=int(row["volume"]) if "volume" in row.index else 0,
+    )
 
 
-def backtest(
+def run_backtest(
     df: pd.DataFrame,
-    start_equity: float = 998.0,
-    risk_pct: float = 0.5,
-    tp_r: float = 7,
-    min_gap: float = 0.02,
-    trade_on_first: bool = False,
-    slippage: float = 0.01,
-    monthly_deposit: float = 1000.0,
-    alpha: float = 7,
-    r_max: float = 7,
-) -> Tuple[float, List[Trade]]:
+    start_equity: float,
+    cfg: ExecCfg,
+    tp_r: float = 2.0,
+    short_enabled: bool = False,
+) -> tuple[list[Trade], float]:
     equity = start_equity
+    trades: list[Trade] = []
 
-    def frac_closed_norm_log(r: float) -> float:
-        # normalized log curve in [0,1]
-        if r <= 0:
-            return 0.0
-        r = min(r, r_max)
-        return log(1.5 + alpha * r) / log(1.5 + alpha * r_max)
+    fvg_stack: list[FVG] = []
+    candle0: Optional[Candle] = None
+    candle1: Optional[Candle] = None
 
-    trades: List[Trade] = []
+    need_to_enter = False
+    signal_candle: Optional[Candle] = None  # candle1 at the time FVG was detected
+    fvg_dir_pending: Optional[str] = None
 
-    # group by ET date
-    df = df.sort_values("ts_et").reset_index(drop=True)
-    df["day"] = df["ts_et"].dt.strftime("%Y-%m-%d")
+    pos_side: Optional[str] = None
+    pos_entry = pos_stop = pos_tp = pos_qty = 0.0
+    pos_entry_ts: Optional[pd.Timestamp] = None
 
-    # position state
-    in_pos = False
-    pos_dir: Optional[Literal["long", "short"]] = None
-    entry = stop = tp = 0.0
-    shares = 0
-    entry_ts: Optional[pd.Timestamp] = None
-    init_shares = 0
-    remaining_shares = 0
-    max_r_seen = 0.0
-    realized_pnl_current_trade = 0.0
-    risk_per_share = 0.0
-    last_deposit_yyyymm: Optional[str] = None
-    # FVG stack per day (reset daily)
-    deposit = 1
-    for day, day_df in df.groupby("day", sort=True):
-        day_df = day_df.reset_index(drop=True)
-        yyyymm = day[:7]  # "YYYY-MM"
-        
-        if last_deposit_yyyymm != yyyymm:
-            print(f"Added deposit for the {deposit}. time")
-            equity += monthly_deposit
-            last_deposit_yyyymm = yyyymm
-            deposit += 1
-        if len(day_df) < 10:
+    trades_today = 0
+    current_day = None
+
+    for _, row in df.iterrows():
+        ts: pd.Timestamp = row["ts"]
+        t = ts.time()
+
+        day = ts.date()
+        if day != current_day:
+            current_day = day
+            trades_today = 0
+            candle0 = None
+            candle1 = None
+            fvg_stack.clear()
+            need_to_enter = False
+            pos_side = None  # EOD close should have handled this; safety reset
+
+        if t < SESSION_START or t >= EOD_CLOSE_TIME:
             continue
 
-        stack: List[FVG] = []
+        bar_open  = float(row["open"])
+        bar_high  = float(row["high"])
+        bar_low   = float(row["low"])
+        bar_close = float(row["close"])
 
-        i = 2  # need 3 bars
-        while i < len(day_df):
-            row = day_df.iloc[i]
-            ts = row["ts_et"]
+        stack_pop_invalidated(fvg_stack, bar_low, bar_high)
 
-            o = float(row["open"])
-            h = float(row["high"])
-            l = float(row["low"])
-            c = float(row["close"])
+        # --- Enter on this bar's open (FVG signal came from previous bar) ---
+        if need_to_enter and pos_side is None and trades_today < MAX_TRADES_PER_DAY:
+            need_to_enter = False
+            entry_px = bar_open
 
-            # Pop invalidated FVGs using current bar
-            stack_pop_invalidated(stack, bar_low=l, bar_high=h)
+            if fvg_dir_pending == "bull":
+                stop = float(signal_candle.low)
+                risk_ps = entry_px - stop
+                if risk_ps > 0:
+                    tp = entry_px + tp_r * risk_ps
+                    qty = float(int((equity * cfg.risk_pct) / risk_ps))
+                    qty = min(qty, float(int((equity * cfg.max_pos_value_mult) / entry_px)))
+                    if qty > 0:
+                        pos_side = "long"
+                        pos_entry, pos_stop, pos_tp, pos_qty = entry_px, stop, tp, qty
+                        pos_entry_ts = ts
 
-            # Manage position exits
-            if in_pos:
-                if pos_dir == "long":
-                    mfe = h - entry
-                    cur_r = mfe / risk_per_share
-                else:
-                    mfe = entry - l
-                    cur_r = mfe / risk_per_share
+            elif fvg_dir_pending == "bear" and short_enabled:
+                stop = float(signal_candle.high)
+                risk_ps = stop - entry_px
+                if risk_ps > 0:
+                    tp = entry_px - tp_r * risk_ps
+                    qty = float(int((equity * cfg.risk_pct) / risk_ps))
+                    qty = min(qty, float(int((equity * cfg.max_pos_value_mult) / entry_px)))
+                    if qty > 0:
+                        pos_side = "short"
+                        pos_entry, pos_stop, pos_tp, pos_qty = entry_px, stop, tp, qty
+                        pos_entry_ts = ts
+        elif need_to_enter:
+            need_to_enter = False  # trades_today limit hit or already in position
 
-                if cur_r > max_r_seen:
-                    max_r_seen = cur_r
+        # --- Manage open position ---
+        if pos_side is not None:
+            exit_px: Optional[float] = None
+            exit_reason: Optional[str] = None
 
-                desired_closed = frac_closed_norm_log(max_r_seen)
-                desired_closed_shares = int(floor(init_shares * desired_closed))
-                to_close = desired_closed_shares - (init_shares - remaining_shares)
+            if pos_side == "long":
+                if bar_low <= pos_stop:            # stop first (conservative)
+                    exit_px, exit_reason = pos_stop, "stop"
+                elif bar_high >= pos_tp:
+                    exit_px, exit_reason = pos_tp, "tp"
+                elif t >= dtime(15, 54):
+                    exit_px, exit_reason = bar_close, "eod"
+            else:
+                if bar_high >= pos_stop:
+                    exit_px, exit_reason = pos_stop, "stop"
+                elif bar_low <= pos_tp:
+                    exit_px, exit_reason = pos_tp, "tp"
+                elif t >= dtime(15, 54):
+                    exit_px, exit_reason = bar_close, "eod"
 
-                if to_close > 0 and remaining_shares > 0:
-                    to_close = min(to_close, remaining_shares)
+            if exit_px is not None:
+                pnl = (
+                    (exit_px - pos_entry) * pos_qty if pos_side == "long"
+                    else (pos_entry - exit_px) * pos_qty
+                )
+                equity += pnl
+                trades.append(Trade(
+                    entry_ts=pos_entry_ts, exit_ts=ts,
+                    side=pos_side,
+                    entry=pos_entry, stop=pos_stop, tp=pos_tp, qty=pos_qty,
+                    exit_price=exit_px, exit_reason=exit_reason, pnl=pnl,
+                ))
+                trades_today += 1
+                pos_side = None
 
-                    # Fill at the R-level price implied by desired fraction.
-                    # (Approx: assume we can fill at the level reached; apply slippage worst-case.)
-                    # Use the price corresponding to max_r_seen (capped to r_max inside frac func).
-                    exec_r = min(max_r_seen, r_max)
+        # --- FVG detection when flat ---
+        if pos_side is None and not need_to_enter and candle0 is not None and candle1 is not None:
+            cur = _make_candle(row)
+            detected = detect_fvg(candle0, candle1, cur)
+            if detected is not None:
+                if should_push(fvg_stack, detected.dir, gap_low=detected.gap_low, gap_high=detected.gap_high):
+                    fvg_stack.append(detected)
+                    if not (detected.dir == "bear" and not short_enabled):
+                        need_to_enter = True
+                        signal_candle = candle1
+                        fvg_dir_pending = detected.dir
 
-                    if pos_dir == "long":
-                        fill_price = (entry + exec_r * risk_per_share) - slippage  # selling -> worse
-                        pnl_per_share = fill_price - entry
-                    else:
-                        fill_price = (entry - exec_r * risk_per_share) + slippage  # buy-to-cover -> worse
-                        pnl_per_share = entry - fill_price
+        # Advance the 3-bar window
+        candle0 = candle1
+        candle1 = _make_candle(row)
 
-                    pnl = pnl_per_share * to_close
-                    equity += pnl
-                    remaining_shares -= to_close
-
-                    # If fully scaled out, end trade here (no further stop/tp checks needed)
-                    if remaining_shares == 0:
-                        realized_pnl_current_trade += pnl
-                        trades.append(Trade(
-                            entry_ts=entry_ts,
-                            exit_ts=ts,
-                            direction=pos_dir,
-                            entry=entry,
-                            stop=stop,
-                            tp=tp,
-                            shares=shares,
-                            exit_price=exit_price,
-                            exit_reason=exit_reason,
-                            pnl=realized_pnl_current_trade,
-                            equity_after=equity,
-                        ))
-                        in_pos = False
-                        pos_dir = None
-                        entry_ts = None
-                        shares = 0
-                        i += 1
-                        continue
-
-                 # >>> INSERT LOSS LADDER HERE <<<
-                # --- Loss ladder (COMMENTED OUT FOR NOW) ---
-                # # Compute worst adverse excursion (MAE) within this bar in R
-                # if pos_dir == "long":
-                #     mae = entry - l           # price went against us down to l
-                #     neg_r = mae / risk_per_share
-                # else:
-                #     mae = h - entry           # price went against us up to h
-                #     neg_r = mae / risk_per_share
-                #
-                # # Example: use the same normalized log idea on adverse R,
-                # # but map it to "fraction to CUT" (0..1). You'd define a function like:
-                # # frac_cut_norm_log(neg_r) where neg_r >= 0 means how far against you.
-                # #
-                # # desired_cut = frac_cut_norm_log(neg_r)
-                # # desired_cut_shares = int(floor(init_shares * desired_cut))
-                # # to_cut = desired_cut_shares - (init_shares - remaining_shares_cut_so_far)
-                # #
-                # # ... then execute reduction at a conservative fill price and update:
-                # # equity += pnl_from_cut
-                # # remaining_shares -= to_cut
+    return trades, equity
 
 
+def print_results(trades: list[Trade], start_equity: float, end_equity: float) -> None:
+    print(f"\n{'='*48}")
+    print("BACKTEST RESULTS")
+    print(f"{'='*48}")
 
-                exit_reason = None
-                exit_price = None
+    if not trades:
+        print("No trades taken.")
+        print(f"{'='*48}\n")
+        return
 
-                # conservative: if both touched in same bar => stop first
-                if pos_dir == "long":
-                    if l <= stop:
-                        exit_reason, exit_price = "stop", (stop - slippage) if pos_dir == "long" else (stop + slippage)
-                    elif h >= tp:
-                        exit_reason, exit_price = "tp", (tp - slippage) if pos_dir == "long" else (tp + slippage)
-                else:
-                    if h >= stop:
-                        exit_reason, exit_price = "stop", (stop - slippage) if pos_dir == "long" else (stop + slippage)
-                    elif l <= tp:
-                        exit_reason, exit_price = "tp", (tp - slippage) if pos_dir == "long" else (tp + slippage)
+    wins   = [t for t in trades if t.pnl > 0]
+    losses = [t for t in trades if t.pnl <= 0]
+    stops  = [t for t in trades if t.exit_reason == "stop"]
+    tps    = [t for t in trades if t.exit_reason == "tp"]
+    eods   = [t for t in trades if t.exit_reason == "eod"]
+    longs  = [t for t in trades if t.side == "long"]
+    shorts = [t for t in trades if t.side == "short"]
 
-                # EOD force close
-                if ts.time() == dtime(15, 59) and exit_reason is None:
-                    exit_reason, exit_price = "eod", (c - slippage) if pos_dir == "long" else (c + slippage)
-
-                if exit_reason is not None:
-                    pnl_per_share = (exit_price - entry) if pos_dir == "long" else (entry - exit_price)
-                    pnl = pnl_per_share * remaining_shares
-                    equity += pnl
-                    pnl = realized_pnl_current_trade
-                    trades.append(Trade(
-                        entry_ts=entry_ts,  # type: ignore[arg-type]
-                        exit_ts=ts,
-                        direction=pos_dir,  # type: ignore[arg-type]
-                        entry=entry,
-                        stop=stop,
-                        tp=tp,
-                        shares=shares,
-                        exit_price=exit_price,
-                        exit_reason=exit_reason,
-                        pnl=realized_pnl_current_trade,
-                        equity_after=equity,
-                    ))
-
-                    in_pos = False
-                    pos_dir = None
-                    entry_ts = None
-                    shares = 0
-                    remaining_shares = 0
-                    init_shares = 0
-                    max_r_seen = 0.0
-                    realized_pnl_current_trade = 0.0
-
-                i += 1
-                continue
-
-            # Flat: detect FVG on (i-2, i-1, i)
-            b0 = day_df.iloc[i - 2]
-            b1 = day_df.iloc[i - 1]
-            b2 = day_df.iloc[i]
-            fvg = detect_fvg(b0, b1, b2)
-
-            pushed = False
-            signaled = False
-            signal_dir: Optional[Literal["long", "short"]] = None
-            signal_stop = 0.0
-            signal_tp = 0.0
-            signal_rps = 0.0
-
-            if fvg is not None:
-                gap_low = float(fvg["gap_low"])
-                gap_high = float(fvg["gap_high"])
-                if (gap_high - gap_low) >= min_gap:
-                    if should_push(stack, fvg["dir"], gap_low, gap_high):
-                        # Decide if this push should trigger a trade:
-                        # - If stack was empty and trade_on_first=False => just anchor structure, no trade
-                        was_empty = (len(stack) == 0)
-                        stack.append(FVG(
-                            dir=fvg["dir"],
-                            gap_low=gap_low,
-                            gap_high=gap_high,
-                            created_ts=ts,
-                        ))
-                        pushed = True
-
-                        if (not was_empty) or trade_on_first:
-                            # enter NEXT bar open (i+1) to avoid lookahead
-                            if i + 1 < len(day_df):
-                                next_bar = day_df.iloc[i + 1]
-                                raw_entry = float(next_bar["open"])
-
-
-                                if fvg["dir"] == "bull":
-                                    entry_price = (raw_entry + slippage) if signal_dir == "long" else (raw_entry - slippage)
-                                    entry_time = next_bar["ts_et"]
-                                    signal_dir = "long"
-                                    signal_stop = float(b2["low"])
-                                    signal_rps = entry_price - signal_stop
-                                    if signal_rps > 0:
-                                        signal_tp = entry_price + tp_r * signal_rps
-                                        signaled = True
-                                else:
-                                    signal_dir = "short"
-                                    entry_price = (raw_entry + slippage) if signal_dir == "long" else (raw_entry - slippage)
-                                    entry_time = next_bar["ts_et"]
-                                    signal_stop = float(b2["high"])
-                                    signal_rps = signal_stop - entry_price
-                                    if signal_rps > 0:
-                                        signal_tp = entry_price - tp_r * signal_rps
-                                        signaled = True
-
-                                if signaled:
-                                    # position sizing by risk
-                                    risk_dollars = equity * risk_pct
-                                    sh = int(floor(risk_dollars / signal_rps)) if signal_rps > 0 else 0
-                                    if sh < 1:
-                                        sh = 1
-
-                                    # affordability check (simple): for long require cash >= entry*shares
-                                    # (for short, ignore margin details; this is a backtest simplification)
-                                    if signal_dir == "long" and (entry_price * sh) > equity:
-                                        # scale down if needed
-                                        sh = int(floor(equity / entry_price))
-                                    if sh >= 1:
-                                        init_shares = sh
-                                        remaining_shares = sh
-                                        max_r_seen = 0.0
-                                        realized_pnl_current_trade = 0.0
-                                        in_pos = True
-                                        pos_dir = signal_dir
-                                        entry = entry_price
-                                        stop = signal_stop
-                                        tp = signal_tp
-                                        shares = sh
-                                        entry_ts = entry_time
-                                        risk_per_share = signal_rps
-
-            i += 1
-
-        # If still in position at end of day, it would have been closed by 15:59 logic.
-
-    return equity, trades
+    print(f"Trades:       {len(trades)}  ({len(longs)} long, {len(shorts)} short)")
+    print(f"Win rate:     {len(wins)/len(trades)*100:.1f}%  ({len(wins)} wins / {len(losses)} losses)")
+    print(f"Exit — stop: {len(stops)}  |  tp: {len(tps)}  |  eod: {len(eods)}")
+    print(f"Start equity: ${start_equity:,.2f}")
+    print(f"End equity:   ${end_equity:,.2f}")
+    print(f"Total P&L:    ${end_equity - start_equity:,.2f}  ({(end_equity / start_equity - 1) * 100:.1f}%)")
+    if wins:
+        print(f"Avg win:      ${sum(t.pnl for t in wins) / len(wins):,.2f}")
+    if losses:
+        print(f"Avg loss:     ${sum(t.pnl for t in losses) / len(losses):,.2f}")
+    print(f"{'='*48}\n")
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--file", required=True, help="Parquet path with 1-min bars")
-    ap.add_argument("--assume_naive_tz", default="UTC", help="If timestamps tz-naive, assume this TZ (default UTC)")
-    ap.add_argument("--start", type=float, default=1000.0, help="Starting equity (default 1000)")
-    ap.add_argument("--risk_pct", type=float, default=0.01, help="Risk per trade as fraction of equity (default 0.01)")
-    ap.add_argument("--tp_r", type=float, default=2.0, help="Take-profit multiple in R (default 2.0)")
-    ap.add_argument("--min_gap", type=float, default=0.0, help="Min FVG gap size (price units)")
-    ap.add_argument("--trade_on_first", action="store_true", help="Also trade the first FVG that anchors an empty stack")
-    ap.add_argument("--out_trades", default="trades_stack.csv")
-    ap.add_argument("--slip", type=float, default=0.01, help="Slippage in price units per fill (default 0.01)")
-    ap.add_argument("--monthly_deposit", type=float, default=1000.0, help="Monthly deposit added on first trading day seen (default 1000)")
-    ap.add_argument("--alpha", type=float, default=2.0, help="Normalized log curve aggressiveness (default 2.0)")
-    ap.add_argument("--r_max", type=float, default=2.0, help="R ")
+    ap = argparse.ArgumentParser(description="Backtest FVG strategy on 1-min bar parquet")
+    ap.add_argument("parquet",    help="Path to parquet file")
+    ap.add_argument("--equity",   type=float, default=10_000.0, help="Starting equity (default: 10000)")
+    ap.add_argument("--risk-pct", type=float, default=0.01,     help="Risk per trade as fraction of equity (default: 0.01 = 1%%)")
+    ap.add_argument("--tp-r",     type=float, default=2.0,      help="Take-profit R multiple (default: 2.0)")
+    ap.add_argument("--short",    action="store_true",           help="Enable short trades")
+    ap.add_argument("--out",      default="",                    help="Save trade log to this CSV path (optional)")
     args = ap.parse_args()
 
-    df = pd.read_parquet(args.file)
-
-    df = df.reset_index()
-    idx_col = df.columns[0]          # the index column becomes the first column
-    df = df.rename(columns={idx_col: "ts"})
-
-    df["ts"] = pd.to_datetime(df["ts"], errors="raise")
-
-    # make tz-aware and create ts_et
-    if df["ts"].dt.tz is None:
-        df["ts_utc"] = df["ts"].dt.tz_localize("UTC")
-    else:
-        df["ts_utc"] = df["ts"].dt.tz_convert("UTC")
-
-    df["ts_et"] = df["ts_utc"].dt.tz_convert(ET)
-
-    # keep only RTH
-    df = df[df["ts_et"].apply(in_rth)].copy()
-
-    end_equity, trades = backtest(
-        df,
-        start_equity=args.start,
+    cfg = ExecCfg(
         risk_pct=args.risk_pct,
-        tp_r=args.tp_r,
-        min_gap=args.min_gap,
-        trade_on_first=args.trade_on_first,
-        slippage=args.slip,
-        monthly_deposit=args.monthly_deposit,
-        alpha=args.alpha,
-        r_max=args.r_max,
+        max_pos_value_mult=1.0,
+        enable_loss_ladder=False,
     )
 
-    print(f"Start equity: ${args.start:,.2f}")
-    print(f"End equity:   ${end_equity:,.2f}")
-    if trades:
-        tdf = pd.DataFrame([t.__dict__ for t in trades])
-        tdf.to_csv(args.out_trades, index=False)
-        win_rate = float((tdf["pnl"] > 0).mean())
-        total_pnl = float(tdf["pnl"].sum())
-        print(f"Trades: {len(trades)} | Win rate: {win_rate*100:.1f}% | Total PnL: ${total_pnl:,.2f}")
-        print(f"Saved trades -> {args.out_trades}")
-    else:
-        print("No trades taken (try --trade_on_first or lower --min_gap).")
+    print(f"Loading {args.parquet} ...")
+    df = load_bars(args.parquet)
+    print(f"  {len(df):,} bars  |  {df['ts'].iloc[0].date()} → {df['ts'].iloc[-1].date()}")
+
+    trades, end_equity = run_backtest(
+        df=df,
+        start_equity=args.equity,
+        cfg=cfg,
+        tp_r=args.tp_r,
+        short_enabled=args.short,
+    )
+
+    print_results(trades, args.equity, end_equity)
+
+    if args.out and trades:
+        pd.DataFrame([t.__dict__ for t in trades]).to_csv(args.out, index=False)
+        print(f"Trade log saved to {args.out}")
 
 
 if __name__ == "__main__":

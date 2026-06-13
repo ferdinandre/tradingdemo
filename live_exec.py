@@ -414,18 +414,18 @@ class LiveExecutor:
             pos.remaining_qty = 0.0
             self._logger.log(f"Hard-exit {reason}: FLAT @ {fill.avg_fill_price}")
             return reason
-        if px is not None:
-            px = float(px)
-        # stop-first (conservative)
-            stop_hit = (px <= pos.stop) if pos.side == "long" else (px >= pos.stop)
-            if stop_hit:
-                return _exit_all("stop")
+        if px is None:
+            return _exit_all("forced")
 
-            tp_hit = (px >= pos.tp) if pos.side == "long" else (px <= pos.tp)
-            if tp_hit:
-                return _exit_all("tp")
+        px = float(px)
+        stop_hit = (px <= pos.stop) if pos.side == "long" else (px >= pos.stop)
+        if stop_hit:
+            return _exit_all("stop")
 
-        # end of day
+        tp_hit = (px >= pos.tp) if pos.side == "long" else (px <= pos.tp)
+        if tp_hit:
+            return _exit_all("tp")
+
         if not timemgr.market_still_open():
             return _exit_all("eod")
 

@@ -1,0 +1,10 @@
+[Unit]
+Description=Stop trading bot after market close
+
+[Timer]
+OnCalendar=Mon..Fri 16:05:00
+Persistent=true
+Unit=tradingbot-stop.service
+
+[Install]
+WantedBy=timers.target

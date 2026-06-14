@@ -1,0 +1,10 @@
+[Unit]
+Description=Start trading bot before market open
+
+[Timer]
+OnCalendar=Mon..Fri 09:25:00
+Persistent=true
+Unit=tradingbot.service
+
+[Install]
+WantedBy=timers.target

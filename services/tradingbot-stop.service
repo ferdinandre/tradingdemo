@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop trading bot after market close
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl stop tradingbot.service

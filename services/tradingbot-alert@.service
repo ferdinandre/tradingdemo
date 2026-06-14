@@ -1,0 +1,6 @@
+[Unit]
+Description=Send email alert for failed service %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tradingbot-alert.sh %i

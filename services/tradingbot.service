@@ -1,0 +1,17 @@
+[Unit]
+Description=Trading Bot
+After=network-online.target
+Wants=network-online.target
+OnFailure=tradingbot-alert@%n.service
+
+[Service]
+TimeoutStopSec=60
+Type=simple
+User=root
+WorkingDirectory=/home/fandre/tradingdemo
+EnvironmentFile=/home/fandre/tradingdemo/.env
+ExecStart=/home/fandre/tradingdemo/venv/bin/python /home/fandre/tradingdemo/main_overext.py
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
